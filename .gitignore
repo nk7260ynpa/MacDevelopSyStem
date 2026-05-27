@@ -32,6 +32,9 @@ Icon?
 docker-compose.override.yaml
 docker-compose.override.yml
 
+# GitLab 持久化資料（bind mount 目錄）
+gitlab/docker/data/
+
 # Python（如後續加入腳本）
 __pycache__/
 *.py[cod]

@@ -1,0 +1,39 @@
+# GitLab CE 本機開發部署用 docker compose 設定。
+#
+# 對外 port：
+#   - 8080 -> 80（HTTP）
+#   - 2222 -> 22（SSH，避免與 macOS 本機 sshd 衝突）
+#
+# 資料持久化：使用 bind mount 至 ./data/{config,data,logs}，
+# 由 ../run.sh 啟動前確保目錄已建立。
+services:
+  gitlab:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    image: macdev/gitlab:latest
+    container_name: gitlab
+    hostname: gitlab.local
+    restart: unless-stopped
+    shm_size: '256m'
+    ports:
+      - "8080:80"
+      - "2222:22"
+    environment:
+      GITLAB_OMNIBUS_CONFIG: |
+        external_url 'http://localhost:8080'
+        gitlab_rails['gitlab_shell_ssh_port'] = 2222
+        # 關閉 Let's Encrypt（本機 HTTP 環境用不到）
+        letsencrypt['enable'] = false
+        # 關閉 Prometheus 監控以節省資源（如需可移除此行）
+        prometheus_monitoring['enable'] = false
+    volumes:
+      - ./data/config:/etc/gitlab
+      - ./data/logs:/var/log/gitlab
+      - ./data/data:/var/opt/gitlab
+    healthcheck:
+      test: ["CMD", "curl", "-fsS", "http://localhost/-/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 5
+      start_period: 5m
