@@ -1,0 +1,83 @@
+# GitLab Omnibus 單體 Deployment。
+#
+# 注意事項：
+#   - GitLab Omnibus 並非無狀態服務，replicas 固定為 1。
+#   - 採用 Recreate 策略避免新舊 pod 同時掛載 ReadWriteOnce PVC。
+#   - 首次啟動需 3-5 分鐘完成自我初始化，因此 readiness/liveness 的
+#     initialDelaySeconds 設較長。
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: gitlab
+  namespace: gitlab
+  labels:
+    app: gitlab
+spec:
+  replicas: 1
+  strategy:
+    type: Recreate
+  selector:
+    matchLabels:
+      app: gitlab
+  template:
+    metadata:
+      labels:
+        app: gitlab
+    spec:
+      terminationGracePeriodSeconds: 60
+      containers:
+        - name: gitlab
+          image: gitlab/gitlab-ce:latest
+          imagePullPolicy: IfNotPresent
+          ports:
+            - name: http
+              containerPort: 80
+            - name: ssh
+              containerPort: 22
+          env:
+            - name: GITLAB_OMNIBUS_CONFIG
+              value: |
+                external_url 'http://localhost:30080'
+                gitlab_rails['gitlab_shell_ssh_port'] = 30022
+                letsencrypt['enable'] = false
+                prometheus_monitoring['enable'] = false
+          volumeMounts:
+            - name: config
+              mountPath: /etc/gitlab
+            - name: logs
+              mountPath: /var/log/gitlab
+            - name: data
+              mountPath: /var/opt/gitlab
+          resources:
+            requests:
+              cpu: "500m"
+              memory: "2Gi"
+            limits:
+              cpu: "2"
+              memory: "6Gi"
+          readinessProbe:
+            httpGet:
+              path: /-/readiness
+              port: http
+            initialDelaySeconds: 180
+            periodSeconds: 30
+            timeoutSeconds: 10
+            failureThreshold: 10
+          livenessProbe:
+            httpGet:
+              path: /-/health
+              port: http
+            initialDelaySeconds: 300
+            periodSeconds: 60
+            timeoutSeconds: 10
+            failureThreshold: 5
+      volumes:
+        - name: config
+          persistentVolumeClaim:
+            claimName: gitlab-config
+        - name: logs
+          persistentVolumeClaim:
+            claimName: gitlab-logs
+        - name: data
+          persistentVolumeClaim:
+            claimName: gitlab-data

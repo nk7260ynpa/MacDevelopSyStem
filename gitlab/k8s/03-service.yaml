@@ -1,0 +1,26 @@
+# GitLab 對外存取 Service。
+#
+# 採 NodePort，固定 nodePort 為 30080 / 30022，方便：
+#   - Docker Desktop K8s：直接 http://localhost:30080
+#   - kind：搭配 extraPortMappings 即可
+#   - minikube：使用 `minikube service -n gitlab gitlab --url`
+apiVersion: v1
+kind: Service
+metadata:
+  name: gitlab
+  namespace: gitlab
+  labels:
+    app: gitlab
+spec:
+  type: NodePort
+  selector:
+    app: gitlab
+  ports:
+    - name: http
+      port: 80
+      targetPort: http
+      nodePort: 30080
+    - name: ssh
+      port: 22
+      targetPort: ssh
+      nodePort: 30022

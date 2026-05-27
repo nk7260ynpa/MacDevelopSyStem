@@ -1,0 +1,11 @@
+# GitLab 專屬 namespace。
+# 所有 GitLab 相關資源（PVC、Deployment、Service）皆放置於此 namespace，
+# 便於 ./delete.sh 一次清除。
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: gitlab
+  labels:
+    app: gitlab
+    app.kubernetes.io/name: gitlab
+    app.kubernetes.io/part-of: macdevelopsystem

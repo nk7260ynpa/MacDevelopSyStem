@@ -1,0 +1,42 @@
+# GitLab 三組持久化儲存：
+#   - gitlab-config：對應 /etc/gitlab，存放 gitlab.rb 等設定
+#   - gitlab-logs  ：對應 /var/log/gitlab，存放各元件 log
+#   - gitlab-data  ：對應 /var/opt/gitlab，存放 Repository、PostgreSQL、Redis 等實際資料
+#
+# 未指定 storageClassName，使用叢集預設 provisioner
+# （Docker Desktop / kind / minikube 皆會建立預設 storage class）。
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: gitlab-config
+  namespace: gitlab
+spec:
+  accessModes:
+    - ReadWriteOnce
+  resources:
+    requests:
+      storage: 1Gi
+---
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: gitlab-logs
+  namespace: gitlab
+spec:
+  accessModes:
+    - ReadWriteOnce
+  resources:
+    requests:
+      storage: 5Gi
+---
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: gitlab-data
+  namespace: gitlab
+spec:
+  accessModes:
+    - ReadWriteOnce
+  resources:
+    requests:
+      storage: 20Gi
