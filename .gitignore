@@ -1,0 +1,43 @@
+# Log files
+*.log
+logs/
+
+# Claude Code 個人設定（不屬於團隊共享）
+.claude/
+
+# macOS
+.DS_Store
+.AppleDouble
+.LSOverride
+Icon?
+._*
+.Spotlight-V100
+.Trashes
+
+# Editors / IDEs
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+
+# Environment / secrets
+.env
+.env.*
+!.env.example
+*.pem
+*.key
+
+# Docker
+docker-compose.override.yaml
+docker-compose.override.yml
+
+# Python（如後續加入腳本）
+__pycache__/
+*.py[cod]
+*.egg-info/
+.venv/
+venv/
+
+# Node（如後續加入腳本）
+node_modules/
