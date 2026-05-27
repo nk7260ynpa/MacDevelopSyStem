@@ -14,7 +14,7 @@
 | 工具 | 用途 | 狀態 |
 | --- | --- | --- |
 | GitLab | 自架 Git 程式碼托管與 CI/CD | 已支援（Docker Compose、K8s） |
-| Harbor | 私有 Container Registry | 規劃中 |
+| Harbor | 私有 Container Registry | 已支援（Docker Compose、K8s） |
 | （後續擴充） | 視需求新增，例如 Jenkins、Nexus、MinIO 等 | — |
 
 ## 專案架構
@@ -38,11 +38,25 @@ MacDevelopSyStem/
 │       ├── 01-pvc.yaml
 │       ├── 02-deployment.yaml
 │       └── 03-service.yaml
-├── harbor/                # Harbor 部署設定（規劃中）
-│   └── docker/
-│       ├── build.sh
-│       ├── Dockerfile
-│       └── docker-compose.yaml
+├── harbor/                # Harbor 部署設定
+│   ├── run.sh             # Docker Compose 啟動入口（up/logs/stop/status）
+│   ├── docker/            # Docker Compose 方案
+│   │   ├── build.sh       # 拉 image + 用 prepare 產生各 service 設定
+│   │   ├── Dockerfile
+│   │   ├── docker-compose.yaml
+│   │   ├── harbor.yml     # Harbor 設定範本（供 prepare 讀取）
+│   │   ├── .env.example
+│   │   └── data/          # 持久化資料（執行時建立，不納入版本控制）
+│   └── k8s/               # Kubernetes 原生 Manifests 方案
+│       ├── apply.sh
+│       ├── delete.sh
+│       ├── 00-namespace.yaml
+│       ├── 01-pvc.yaml
+│       ├── 02-secret.yaml
+│       ├── 03-prepare-job.yaml
+│       ├── 04-rbac.yaml
+│       ├── 05-init-configmaps-job.yaml
+│       └── 10~17-*.yaml   # 8 個 service（log/redis/db/registry/core/...）
 └── logs/                  # 各工具運行日誌（執行時建立）
 ```
 
@@ -50,7 +64,8 @@ MacDevelopSyStem/
 
 - macOS（Apple Silicon 或 Intel）
 - Docker Desktop 或同等容器執行環境
-  - 建議分配 ≥ 4 GB RAM 給 Docker（GitLab Omnibus 啟動建議值）
+  - 建議分配 ≥ 4 GB RAM 給 Docker（GitLab Omnibus 建議值）
+  - 若同時啟用 Harbor，建議 ≥ 6 GB RAM（Harbor 含 8 個 service）
 - Bash／Zsh
 - 若使用 K8s 方案，需額外具備：
   - `kubectl`
@@ -149,6 +164,91 @@ kubectl -n gitlab get pods -w
 
 ---
 
+## Harbor 部署
+
+Harbor 為私有 Container Registry，包含 8 個 service（log / registry / registryctl /
+postgresql / redis / core / portal / jobservice / proxy），與 GitLab 一樣提供
+Docker Compose 與 K8s 兩種方案。版本固定 `v2.11.0`。
+
+### 透過 Docker Compose
+
+首次啟動前必須先拉 image 並產生各 service 設定：
+
+```bash
+cd harbor/docker
+./build.sh               # 拉 v2.11.0 image，並用 prepare 產生 data/config/
+```
+
+啟動：
+
+```bash
+cd harbor
+./run.sh                 # 等同 docker compose up -d
+```
+
+其他操作：
+
+```bash
+./run.sh logs            # 跟隨所有 service log
+./run.sh status          # 查看狀態
+./run.sh stop            # 停止 Harbor
+```
+
+存取資訊：
+
+- 網頁：<http://localhost:8081>
+- 預設帳號：`admin` / `Harbor12345`
+- **⚠ 首次登入後請立即修改密碼。**
+- 持久化資料位置：`harbor/docker/data/`（已於 `.gitignore` 排除）
+
+> 修改 `harbor/docker/harbor.yml` 後，必須重新執行 `./build.sh` 讓 prepare 重生設定，
+> 再 `./run.sh stop && ./run.sh up` 才會生效。
+
+### 透過 Kubernetes
+
+前置：本機 K8s 叢集已就緒、`kubectl get nodes` 可成功。
+
+套用資源：
+
+```bash
+cd harbor/k8s
+./apply.sh
+```
+
+`apply.sh` 共四階段：
+
+1. 建立 Namespace / PVC / Secret / RBAC
+2. 執行 `harbor-prepare` Job（用 `goharbor/prepare` 產生各 service 設定）
+3. 執行 `harbor-init-configmaps` Job（將 prepare 產出之 env 檔轉為 K8s Secret）
+4. 部署 8 個 service
+
+監看狀態：
+
+```bash
+kubectl -n harbor get pods -w
+```
+
+存取資訊：
+
+- 網頁：<http://localhost:30081>（Docker Desktop K8s 可直接從 localhost 存取）
+- 預設帳號：`admin` / `Harbor12345`
+
+清除全部資源：
+
+```bash
+./delete.sh              # 刪除 harbor namespace（連同其下所有資源）
+```
+
+> 注意：K8s 方案功能完整但流程較長，僅 prepare 與 init Job 即需 1-2 分鐘；後續 8 個 service
+> 各自起 pod 需再 2-3 分鐘。若僅作本機日常使用，建議優先選擇 Docker Compose 方案。
+
+### 與 GitLab 同時啟動
+
+Harbor port 8081 / 30081 已刻意錯開 GitLab 的 8080 / 30080，兩者可同時運行
+（記憶體建議 ≥ 6 GB）。
+
+---
+
 ## 使用方式
 
 各工具皆預期提供 `run.sh` 作為啟動入口，使用方式如下：
@@ -156,6 +256,10 @@ kubectl -n gitlab get pods -w
 ```bash
 # 啟動 GitLab（Docker Compose 方案）
 cd gitlab
+./run.sh
+
+# 啟動 Harbor（Docker Compose 方案，首次須先 ./docker/build.sh）
+cd harbor
 ./run.sh
 ```
 
