@@ -1,0 +1,57 @@
+# Harbor 設定範本，供 goharbor/prepare image 讀取以產生各 service 設定。
+#
+# 設計重點：
+#   - hostname: localhost（本機開發專用）
+#   - http.port: 8080（proxy container 內部 listen，外部由 docker-compose
+#     將 8080 對映到主機 8081）
+#   - 不啟用 HTTPS / Trivy / ChartMuseum / Metrics，保留最小可用集合
+#   - data_volume 為 container 內部路徑，docker-compose 會把這些路徑分別
+#     掛到 ./data/{database,registry,jobservice,redis,...}
+hostname: localhost
+
+http:
+  port: 8080
+
+external_url: http://localhost:8081
+
+harbor_admin_password: Harbor12345
+
+database:
+  password: root123
+  max_idle_conns: 100
+  max_open_conns: 900
+
+data_volume: /data
+
+trivy:
+  ignore_unfixed: false
+  skip_update: false
+  offline_scan: false
+  security_check: vuln
+  insecure: false
+
+jobservice:
+  max_job_workers: 10
+  logger_sweeper_duration: 1
+
+notification:
+  webhook_job_max_retry: 3
+  webhook_job_http_client_timeout: 3
+
+log:
+  level: info
+  local:
+    rotate_count: 50
+    rotate_size: 200M
+    location: /var/log/harbor
+
+proxy:
+  http_proxy:
+  https_proxy:
+  no_proxy:
+  components:
+    - core
+    - jobservice
+    - trivy
+
+_version: 2.11.0

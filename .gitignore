@@ -35,6 +35,9 @@ docker-compose.override.yml
 # GitLab 持久化資料（bind mount 目錄）
 gitlab/docker/data/
 
+# Harbor 持久化資料與 prepare 產出之設定
+harbor/docker/data/
+
 # Python（如後續加入腳本）
 __pycache__/
 *.py[cod]
