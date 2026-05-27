@@ -1,0 +1,11 @@
+# Harbor 專屬 namespace。
+# 所有 Harbor 相關資源（PVC、Secret、Job、Deployment、Service）皆置於此 namespace，
+# 便於 ./delete.sh 一次清除。
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: harbor
+  labels:
+    app: harbor
+    app.kubernetes.io/name: harbor
+    app.kubernetes.io/part-of: macdevelopsystem

@@ -1,0 +1,77 @@
+# Proxy（nginx，Harbor 對外入口，含 NodePort）。
+#
+# NodePort 30081 對應 container 內 nginx 8080，與 Docker Compose 對外
+# port 8081 概念一致。
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: proxy
+  namespace: harbor
+  labels:
+    app: harbor
+    component: proxy
+spec:
+  replicas: 1
+  strategy:
+    type: Recreate
+  selector:
+    matchLabels:
+      app: harbor
+      component: proxy
+  template:
+    metadata:
+      labels:
+        app: harbor
+        component: proxy
+    spec:
+      containers:
+        - name: proxy
+          image: goharbor/nginx-photon:v2.11.0
+          ports:
+            - containerPort: 8080
+              name: http
+          volumeMounts:
+            - name: config
+              mountPath: /etc/nginx
+              subPath: config/nginx
+              readOnly: true
+          readinessProbe:
+            tcpSocket:
+              port: 8080
+            initialDelaySeconds: 10
+            periodSeconds: 15
+          livenessProbe:
+            tcpSocket:
+              port: 8080
+            initialDelaySeconds: 30
+            periodSeconds: 30
+          resources:
+            requests:
+              cpu: "100m"
+              memory: "128Mi"
+            limits:
+              cpu: "500m"
+              memory: "512Mi"
+      volumes:
+        - name: config
+          persistentVolumeClaim:
+            claimName: harbor-config
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: harbor
+  namespace: harbor
+  labels:
+    app: harbor
+    component: proxy
+spec:
+  type: NodePort
+  selector:
+    app: harbor
+    component: proxy
+  ports:
+    - name: http
+      port: 80
+      targetPort: http
+      nodePort: 30081

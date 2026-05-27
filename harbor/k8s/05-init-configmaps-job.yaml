@@ -1,0 +1,84 @@
+# 將 prepare Job 產出的各 service env 檔轉為 K8s Secret 的初始化 Job。
+#
+# 流程：
+#   1. 掛載 harbor-config PVC 取得 prepare 產出的 /config/<service>/env 與
+#      /secret/* 等檔案。
+#   2. 對每個有 env 檔的 service，以 kubectl create secret generic 的方式
+#      建立 harbor-env-<service> Secret，供對應 Deployment envFrom 使用。
+#   3. 同時建立 harbor-registry-root-crt Secret（registry 簽 token 用）與
+#      harbor-core-key Secret（core 加解密用 secretkey）。
+#
+# 這個 Job 是冪等的（apply 時若 Secret 已存在則改用 apply 更新）。
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: harbor-init-configmaps
+  namespace: harbor
+spec:
+  backoffLimit: 3
+  ttlSecondsAfterFinished: 600
+  template:
+    metadata:
+      labels:
+        app: harbor
+        component: init
+    spec:
+      restartPolicy: OnFailure
+      serviceAccountName: harbor-init
+      containers:
+        - name: init
+          image: bitnami/kubectl:1.30
+          command:
+            - /bin/bash
+            - -c
+            - |
+              set -euo pipefail
+              cd /config
+
+              create_env_secret() {
+                local svc="$1"
+                local env_path="/config/${svc}/env"
+                if [[ ! -f "${env_path}" ]]; then
+                  echo "[skip] no env file for ${svc}"
+                  return 0
+                fi
+                echo "[create] harbor-env-${svc}"
+                kubectl -n harbor create secret generic "harbor-env-${svc}" \
+                  --from-env-file="${env_path}" \
+                  --dry-run=client -o yaml | kubectl apply -f -
+              }
+
+              for svc in core jobservice registryctl db; do
+                create_env_secret "${svc}" || true
+              done
+
+              # core 額外需要 secretkey 與 jwt private key
+              if [[ -f /secret/keys/secretkey ]]; then
+                kubectl -n harbor create secret generic harbor-core-secretkey \
+                  --from-file=secretkey=/secret/keys/secretkey \
+                  --dry-run=client -o yaml | kubectl apply -f -
+              fi
+              if [[ -f /secret/core/private_key.pem ]]; then
+                kubectl -n harbor create secret generic harbor-core-jwt \
+                  --from-file=private_key.pem=/secret/core/private_key.pem \
+                  --dry-run=client -o yaml | kubectl apply -f -
+              fi
+              # registry token 公鑰
+              if [[ -f /secret/registry/root.crt ]]; then
+                kubectl -n harbor create secret generic harbor-registry-root-crt \
+                  --from-file=root.crt=/secret/registry/root.crt \
+                  --dry-run=client -o yaml | kubectl apply -f -
+              fi
+
+              echo "[done] init-configmaps"
+          volumeMounts:
+            - name: config
+              mountPath: /config
+              subPath: config
+            - name: config
+              mountPath: /secret
+              subPath: secret
+      volumes:
+        - name: config
+          persistentVolumeClaim:
+            claimName: harbor-config

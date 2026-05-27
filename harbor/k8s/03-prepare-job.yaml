@@ -1,0 +1,59 @@
+# Harbor 設定產生 Job。
+#
+# 使用官方 goharbor/prepare:v2.11.0 從 harbor-yml Secret 讀取 harbor.yml，
+# 產生各 service 的設定檔與加密金鑰，寫入 harbor-config PVC。
+#
+# 後續所有 service Deployment 會掛載相同的 harbor-config PVC（subPath 對到
+# 各 service 所需資料夾）取得設定。
+#
+# apply.sh 會在套用此 Job 後執行 `kubectl wait --for=condition=complete`，
+# 確認 Job 完成才繼續套用其他 service。
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: harbor-prepare
+  namespace: harbor
+spec:
+  backoffLimit: 3
+  ttlSecondsAfterFinished: 600
+  template:
+    metadata:
+      labels:
+        app: harbor
+        component: prepare
+    spec:
+      restartPolicy: OnFailure
+      containers:
+        - name: prepare
+          image: goharbor/prepare:v2.11.0
+          imagePullPolicy: IfNotPresent
+          command:
+            - /bin/sh
+            - -c
+            - |
+              set -eux
+              mkdir -p /data /secret
+              prepare --conf /input/harbor.yml
+          volumeMounts:
+            - name: harbor-yml
+              mountPath: /input
+              readOnly: true
+            - name: config
+              mountPath: /config
+              subPath: config
+            - name: config
+              mountPath: /data
+              subPath: data
+            - name: config
+              mountPath: /secret
+              subPath: secret
+      volumes:
+        - name: harbor-yml
+          secret:
+            secretName: harbor-yml
+            items:
+              - key: harbor.yml
+                path: harbor.yml
+        - name: config
+          persistentVolumeClaim:
+            claimName: harbor-config

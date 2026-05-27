@@ -1,0 +1,74 @@
+# JobService（背景排程任務：垃圾回收、複寫、Webhook 等）。
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: jobservice
+  namespace: harbor
+  labels:
+    app: harbor
+    component: jobservice
+spec:
+  replicas: 1
+  strategy:
+    type: Recreate
+  selector:
+    matchLabels:
+      app: harbor
+      component: jobservice
+  template:
+    metadata:
+      labels:
+        app: harbor
+        component: jobservice
+    spec:
+      containers:
+        - name: jobservice
+          image: goharbor/harbor-jobservice:v2.11.0
+          ports:
+            - containerPort: 8080
+              name: http
+          envFrom:
+            - secretRef:
+                name: harbor-env-jobservice
+                optional: true
+          volumeMounts:
+            - name: config
+              mountPath: /etc/jobservice/config.yml
+              subPath: config/jobservice/config.yml
+              readOnly: true
+            - name: logs
+              mountPath: /var/log/jobs
+          readinessProbe:
+            httpGet:
+              path: /api/v1/stats
+              port: http
+            initialDelaySeconds: 30
+            periodSeconds: 15
+            failureThreshold: 10
+          resources:
+            requests:
+              cpu: "100m"
+              memory: "256Mi"
+            limits:
+              cpu: "1"
+              memory: "1Gi"
+      volumes:
+        - name: config
+          persistentVolumeClaim:
+            claimName: harbor-config
+        - name: logs
+          persistentVolumeClaim:
+            claimName: harbor-jobservice
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: jobservice
+  namespace: harbor
+spec:
+  selector:
+    app: harbor
+    component: jobservice
+  ports:
+    - port: 80
+      targetPort: http

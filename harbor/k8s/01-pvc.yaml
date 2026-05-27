@@ -1,0 +1,67 @@
+# Harbor 持久化儲存：
+#   - harbor-config   ：prepare Job 寫入後、各 service Deployment 唯讀掛載
+#   - harbor-database ：PostgreSQL 資料
+#   - harbor-registry ：實際 image blob 儲存
+#   - harbor-jobservice：背景任務 log
+#   - harbor-redis    ：Redis 持久化資料
+#
+# 未指定 storageClassName，使用叢集預設 provisioner。
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: harbor-config
+  namespace: harbor
+spec:
+  accessModes:
+    - ReadWriteOnce
+  resources:
+    requests:
+      storage: 1Gi
+---
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: harbor-database
+  namespace: harbor
+spec:
+  accessModes:
+    - ReadWriteOnce
+  resources:
+    requests:
+      storage: 5Gi
+---
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: harbor-registry
+  namespace: harbor
+spec:
+  accessModes:
+    - ReadWriteOnce
+  resources:
+    requests:
+      storage: 20Gi
+---
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: harbor-jobservice
+  namespace: harbor
+spec:
+  accessModes:
+    - ReadWriteOnce
+  resources:
+    requests:
+      storage: 2Gi
+---
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: harbor-redis
+  namespace: harbor
+spec:
+  accessModes:
+    - ReadWriteOnce
+  resources:
+    requests:
+      storage: 1Gi

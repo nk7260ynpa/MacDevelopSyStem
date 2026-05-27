@@ -1,0 +1,66 @@
+# Redis（Harbor 內部快取與 jobservice 任務佇列）。
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: redis
+  namespace: harbor
+  labels:
+    app: harbor
+    component: redis
+spec:
+  replicas: 1
+  strategy:
+    type: Recreate
+  selector:
+    matchLabels:
+      app: harbor
+      component: redis
+  template:
+    metadata:
+      labels:
+        app: harbor
+        component: redis
+    spec:
+      containers:
+        - name: redis
+          image: goharbor/redis-photon:v2.11.0
+          ports:
+            - containerPort: 6379
+              name: redis
+          volumeMounts:
+            - name: data
+              mountPath: /var/lib/redis
+          readinessProbe:
+            tcpSocket:
+              port: 6379
+            initialDelaySeconds: 5
+            periodSeconds: 10
+          livenessProbe:
+            tcpSocket:
+              port: 6379
+            initialDelaySeconds: 30
+            periodSeconds: 30
+          resources:
+            requests:
+              cpu: "50m"
+              memory: "128Mi"
+            limits:
+              cpu: "500m"
+              memory: "512Mi"
+      volumes:
+        - name: data
+          persistentVolumeClaim:
+            claimName: harbor-redis
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: redis
+  namespace: harbor
+spec:
+  selector:
+    app: harbor
+    component: redis
+  ports:
+    - port: 6379
+      targetPort: redis

@@ -1,0 +1,105 @@
+# Harbor Core（後端 API 與業務邏輯主體）。
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: core
+  namespace: harbor
+  labels:
+    app: harbor
+    component: core
+spec:
+  replicas: 1
+  strategy:
+    type: Recreate
+  selector:
+    matchLabels:
+      app: harbor
+      component: core
+  template:
+    metadata:
+      labels:
+        app: harbor
+        component: core
+    spec:
+      containers:
+        - name: core
+          image: goharbor/harbor-core:v2.11.0
+          ports:
+            - containerPort: 8080
+              name: http
+          envFrom:
+            - secretRef:
+                name: harbor-env-core
+                optional: true
+          volumeMounts:
+            - name: config
+              mountPath: /etc/core/app.conf
+              subPath: config/core/app.conf
+              readOnly: true
+            - name: config
+              mountPath: /etc/core/certificates
+              subPath: config/core/certificates
+              readOnly: true
+            - name: secretkey
+              mountPath: /etc/core/key
+              subPath: secretkey
+              readOnly: true
+            - name: jwt
+              mountPath: /etc/core/private_key.pem
+              subPath: private_key.pem
+              readOnly: true
+            - name: data
+              mountPath: /data
+          readinessProbe:
+            httpGet:
+              path: /api/v2.0/ping
+              port: http
+            initialDelaySeconds: 60
+            periodSeconds: 15
+            timeoutSeconds: 10
+            failureThreshold: 10
+          livenessProbe:
+            httpGet:
+              path: /api/v2.0/ping
+              port: http
+            initialDelaySeconds: 120
+            periodSeconds: 30
+            timeoutSeconds: 10
+            failureThreshold: 5
+          resources:
+            requests:
+              cpu: "100m"
+              memory: "256Mi"
+            limits:
+              cpu: "1"
+              memory: "1Gi"
+      volumes:
+        - name: config
+          persistentVolumeClaim:
+            claimName: harbor-config
+        - name: secretkey
+          secret:
+            secretName: harbor-core-secretkey
+            optional: true
+        - name: jwt
+          secret:
+            secretName: harbor-core-jwt
+            optional: true
+        - name: data
+          emptyDir: {}
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: core
+  namespace: harbor
+spec:
+  selector:
+    app: harbor
+    component: core
+  ports:
+    - port: 80
+      targetPort: http
+    - name: http
+      port: 8080
+      targetPort: http

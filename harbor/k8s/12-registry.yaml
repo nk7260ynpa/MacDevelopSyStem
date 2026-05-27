@@ -1,0 +1,113 @@
+# Registry + RegistryCtl 共用同一 Pod。
+#
+# 兩者於 docker-compose 共用 /storage volume（registry-data），ReadWriteOnce
+# 的 PVC 不易跨 pod 共用，因此將兩 container 放在同一 Pod 內並共用 PVC。
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: registry
+  namespace: harbor
+  labels:
+    app: harbor
+    component: registry
+spec:
+  replicas: 1
+  strategy:
+    type: Recreate
+  selector:
+    matchLabels:
+      app: harbor
+      component: registry
+  template:
+    metadata:
+      labels:
+        app: harbor
+        component: registry
+    spec:
+      containers:
+        - name: registry
+          image: goharbor/registry-photon:v2.11.0
+          ports:
+            - containerPort: 5000
+              name: registry
+            - containerPort: 5001
+              name: metrics
+          volumeMounts:
+            - name: storage
+              mountPath: /storage
+            - name: config
+              mountPath: /etc/registry
+              subPath: config/registry
+              readOnly: true
+            - name: root-crt
+              mountPath: /etc/registry/root.crt
+              subPath: root.crt
+              readOnly: true
+          readinessProbe:
+            httpGet:
+              path: /
+              port: 5000
+            initialDelaySeconds: 10
+            periodSeconds: 15
+          resources:
+            requests:
+              cpu: "100m"
+              memory: "256Mi"
+            limits:
+              cpu: "1"
+              memory: "1Gi"
+        - name: registryctl
+          image: goharbor/harbor-registryctl:v2.11.0
+          ports:
+            - containerPort: 8080
+              name: ctl
+          envFrom:
+            - secretRef:
+                name: harbor-env-registryctl
+                optional: true
+          volumeMounts:
+            - name: storage
+              mountPath: /storage
+            - name: config
+              mountPath: /etc/registry
+              subPath: config/registry
+              readOnly: true
+            - name: config
+              mountPath: /etc/registryctl/config.yml
+              subPath: config/registryctl/config.yml
+              readOnly: true
+          resources:
+            requests:
+              cpu: "50m"
+              memory: "128Mi"
+            limits:
+              cpu: "500m"
+              memory: "512Mi"
+      volumes:
+        - name: storage
+          persistentVolumeClaim:
+            claimName: harbor-registry
+        - name: config
+          persistentVolumeClaim:
+            claimName: harbor-config
+        - name: root-crt
+          secret:
+            secretName: harbor-registry-root-crt
+            optional: true
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: registry
+  namespace: harbor
+spec:
+  selector:
+    app: harbor
+    component: registry
+  ports:
+    - name: registry
+      port: 5000
+      targetPort: registry
+    - name: ctl
+      port: 8080
+      targetPort: ctl

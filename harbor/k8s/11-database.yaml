@@ -1,0 +1,74 @@
+# PostgreSQL（Harbor 主要資料儲存）。
+#
+# 採用 harbor-env-db Secret（init Job 從 prepare 產出之 env 檔轉換而來），
+# 取得 POSTGRES_PASSWORD 等變數。
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: postgresql
+  namespace: harbor
+  labels:
+    app: harbor
+    component: database
+spec:
+  replicas: 1
+  strategy:
+    type: Recreate
+  selector:
+    matchLabels:
+      app: harbor
+      component: database
+  template:
+    metadata:
+      labels:
+        app: harbor
+        component: database
+    spec:
+      containers:
+        - name: postgresql
+          image: goharbor/harbor-db:v2.11.0
+          ports:
+            - containerPort: 5432
+              name: postgres
+          envFrom:
+            - secretRef:
+                name: harbor-env-db
+                optional: true
+          volumeMounts:
+            - name: data
+              mountPath: /var/lib/postgresql/data
+          readinessProbe:
+            exec:
+              command: ["sh", "-c", "pg_isready -U postgres"]
+            initialDelaySeconds: 30
+            periodSeconds: 15
+            timeoutSeconds: 5
+          livenessProbe:
+            tcpSocket:
+              port: 5432
+            initialDelaySeconds: 60
+            periodSeconds: 30
+          resources:
+            requests:
+              cpu: "100m"
+              memory: "512Mi"
+            limits:
+              cpu: "1"
+              memory: "2Gi"
+      volumes:
+        - name: data
+          persistentVolumeClaim:
+            claimName: harbor-database
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: postgresql
+  namespace: harbor
+spec:
+  selector:
+    app: harbor
+    component: database
+  ports:
+    - port: 5432
+      targetPort: postgres

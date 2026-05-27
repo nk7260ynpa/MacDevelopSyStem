@@ -1,0 +1,66 @@
+# Portal（Harbor 前端 UI，純 nginx 靜態網站）。
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: portal
+  namespace: harbor
+  labels:
+    app: harbor
+    component: portal
+spec:
+  replicas: 1
+  strategy:
+    type: Recreate
+  selector:
+    matchLabels:
+      app: harbor
+      component: portal
+  template:
+    metadata:
+      labels:
+        app: harbor
+        component: portal
+    spec:
+      containers:
+        - name: portal
+          image: goharbor/harbor-portal:v2.11.0
+          ports:
+            - containerPort: 8080
+              name: http
+          volumeMounts:
+            - name: config
+              mountPath: /etc/nginx/nginx.conf
+              subPath: config/portal/nginx.conf
+              readOnly: true
+          readinessProbe:
+            tcpSocket:
+              port: 8080
+            initialDelaySeconds: 5
+            periodSeconds: 10
+          resources:
+            requests:
+              cpu: "50m"
+              memory: "64Mi"
+            limits:
+              cpu: "200m"
+              memory: "256Mi"
+      volumes:
+        - name: config
+          persistentVolumeClaim:
+            claimName: harbor-config
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: portal
+  namespace: harbor
+spec:
+  selector:
+    app: harbor
+    component: portal
+  ports:
+    - port: 80
+      targetPort: http
+    - name: http
+      port: 8080
+      targetPort: http

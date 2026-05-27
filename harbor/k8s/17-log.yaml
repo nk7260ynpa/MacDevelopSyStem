@@ -1,0 +1,69 @@
+# Log（rsyslog，集中接收各 service 的日誌）。
+#
+# 與 Docker Compose 不同的是，K8s 內各 pod 已可透過 `kubectl logs` 直接
+# 查看 stdout/stderr，故 log service 主要作為內部記錄之用，並非必要查看路徑。
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: log
+  namespace: harbor
+  labels:
+    app: harbor
+    component: log
+spec:
+  replicas: 1
+  strategy:
+    type: Recreate
+  selector:
+    matchLabels:
+      app: harbor
+      component: log
+  template:
+    metadata:
+      labels:
+        app: harbor
+        component: log
+    spec:
+      containers:
+        - name: log
+          image: goharbor/harbor-log:v2.11.0
+          ports:
+            - containerPort: 10514
+              name: syslog
+          volumeMounts:
+            - name: config
+              mountPath: /etc/logrotate.d/logrotate.conf
+              subPath: config/log/logrotate.conf
+              readOnly: true
+            - name: config
+              mountPath: /etc/rsyslog.d/rsyslog_docker.conf
+              subPath: config/log/rsyslog_docker.conf
+              readOnly: true
+            - name: logs
+              mountPath: /var/log/docker
+          resources:
+            requests:
+              cpu: "50m"
+              memory: "64Mi"
+            limits:
+              cpu: "200m"
+              memory: "256Mi"
+      volumes:
+        - name: config
+          persistentVolumeClaim:
+            claimName: harbor-config
+        - name: logs
+          emptyDir: {}
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: log
+  namespace: harbor
+spec:
+  selector:
+    app: harbor
+    component: log
+  ports:
+    - port: 10514
+      targetPort: syslog

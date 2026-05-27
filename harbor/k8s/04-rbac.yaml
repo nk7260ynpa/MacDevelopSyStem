@@ -1,0 +1,33 @@
+# Harbor 初始化用 RBAC。
+#
+# init-configmaps Job 需要在 harbor namespace 內建立 Secret 與 ConfigMap，
+# 因此給它一個 ServiceAccount 並透過 Role + RoleBinding 賦予最小權限。
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: harbor-init
+  namespace: harbor
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata:
+  name: harbor-init
+  namespace: harbor
+rules:
+  - apiGroups: [""]
+    resources: ["secrets", "configmaps"]
+    verbs: ["get", "list", "create", "update", "patch", "apply"]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: harbor-init
+  namespace: harbor
+subjects:
+  - kind: ServiceAccount
+    name: harbor-init
+    namespace: harbor
+roleRef:
+  kind: Role
+  name: harbor-init
+  apiGroup: rbac.authorization.k8s.io
