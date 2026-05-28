@@ -3,14 +3,15 @@
 #   - gitlab-logs  ：對應 /var/log/gitlab，存放各元件 log
 #   - gitlab-data  ：對應 /var/opt/gitlab，存放 Repository、PostgreSQL、Redis 等實際資料
 #
-# 未指定 storageClassName，使用叢集預設 provisioner
-# （Docker Desktop / kind / minikube 皆會建立預設 storage class）。
+# storageClassName: manual —— 停用動態 provisioner，改綁 pv.template.yaml 定義的
+# hostPath 靜態 PV（指向本機 gitlab/git_data，與 Docker Compose 共用同一份資料）。
 apiVersion: v1
 kind: PersistentVolumeClaim
 metadata:
   name: gitlab-config
   namespace: gitlab
 spec:
+  storageClassName: manual
   accessModes:
     - ReadWriteOnce
   resources:
@@ -23,6 +24,7 @@ metadata:
   name: gitlab-logs
   namespace: gitlab
 spec:
+  storageClassName: manual
   accessModes:
     - ReadWriteOnce
   resources:
@@ -35,6 +37,7 @@ metadata:
   name: gitlab-data
   namespace: gitlab
 spec:
+  storageClassName: manual
   accessModes:
     - ReadWriteOnce
   resources:

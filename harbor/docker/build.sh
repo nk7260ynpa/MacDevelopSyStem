@@ -18,13 +18,15 @@ set -euo pipefail
 
 readonly SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 readonly HARBOR_VERSION="v2.11.0"
+# 持久化資料夾置於服務目錄下，Docker 與 K8s 共用同一份。
+readonly DATA_DIR="${SCRIPT_DIR}/../harbor_data"
 
 cd "${SCRIPT_DIR}"
 
 echo "[build.sh] 建立持久化目錄..."
-mkdir -p data/config
-mkdir -p data/database data/registry data/redis data/log data/job_logs
-mkdir -p data/ca_download data/psc data/secret
+mkdir -p "${DATA_DIR}/config"
+mkdir -p "${DATA_DIR}/database" "${DATA_DIR}/registry" "${DATA_DIR}/redis" "${DATA_DIR}/log" "${DATA_DIR}/job_logs"
+mkdir -p "${DATA_DIR}/ca_download" "${DATA_DIR}/psc" "${DATA_DIR}/secret"
 
 echo "[build.sh] 拉取 Harbor ${HARBOR_VERSION} 各 service image..."
 docker compose pull
@@ -32,9 +34,9 @@ docker compose pull
 echo "[build.sh] 使用 goharbor/prepare:${HARBOR_VERSION} 從 harbor.yml 產生設定..."
 docker run --rm \
   -v "${SCRIPT_DIR}/harbor.yml:/input/harbor.yml" \
-  -v "${SCRIPT_DIR}/data/config:/config" \
-  -v "${SCRIPT_DIR}/data:/data" \
-  -v "${SCRIPT_DIR}/data/secret:/secret" \
+  -v "${DATA_DIR}/config:/config" \
+  -v "${DATA_DIR}:/data" \
+  -v "${DATA_DIR}/secret:/secret" \
   "goharbor/prepare:${HARBOR_VERSION}" \
   prepare --conf /input/harbor.yml
 

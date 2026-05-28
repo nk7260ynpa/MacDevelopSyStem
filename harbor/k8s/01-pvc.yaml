@@ -5,13 +5,15 @@
 #   - harbor-jobservice：背景任務 log
 #   - harbor-redis    ：Redis 持久化資料
 #
-# 未指定 storageClassName，使用叢集預設 provisioner。
+# storageClassName: manual —— 停用動態 provisioner，改綁 pv.template.yaml 定義的
+# hostPath 靜態 PV（指向本機 harbor/harbor_data，與 Docker Compose 共用同一份資料）。
 apiVersion: v1
 kind: PersistentVolumeClaim
 metadata:
   name: harbor-config
   namespace: harbor
 spec:
+  storageClassName: manual
   accessModes:
     - ReadWriteOnce
   resources:
@@ -24,6 +26,7 @@ metadata:
   name: harbor-database
   namespace: harbor
 spec:
+  storageClassName: manual
   accessModes:
     - ReadWriteOnce
   resources:
@@ -36,6 +39,7 @@ metadata:
   name: harbor-registry
   namespace: harbor
 spec:
+  storageClassName: manual
   accessModes:
     - ReadWriteOnce
   resources:
@@ -48,6 +52,7 @@ metadata:
   name: harbor-jobservice
   namespace: harbor
 spec:
+  storageClassName: manual
   accessModes:
     - ReadWriteOnce
   resources:
@@ -60,6 +65,7 @@ metadata:
   name: harbor-redis
   namespace: harbor
 spec:
+  storageClassName: manual
   accessModes:
     - ReadWriteOnce
   resources:

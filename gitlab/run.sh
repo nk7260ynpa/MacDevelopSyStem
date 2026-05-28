@@ -15,9 +15,10 @@ set -euo pipefail
 readonly SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 readonly DOCKER_DIR="${SCRIPT_DIR}/docker"
 
-cd "${DOCKER_DIR}"
+# 持久化資料夾置於服務目錄下，Docker 與 K8s 共用同一份。
+mkdir -p "${SCRIPT_DIR}/git_data"/{config,logs,data}
 
-mkdir -p data/config data/logs data/data
+cd "${DOCKER_DIR}"
 
 action="${1:-up}"
 

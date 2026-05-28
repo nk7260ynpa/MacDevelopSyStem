@@ -24,8 +24,15 @@ fi
 
 echo "[apply.sh] 目前 kubectl context：$(kubectl config current-context)"
 
-echo "[apply.sh] 階段 1：建立 namespace / PVC / Secret / RBAC..."
+# 建立本機持久化資料夾（與 Docker Compose 共用同一份），並解析絕對路徑。
+readonly DATA_DIR="${SCRIPT_DIR}/../harbor_data"
+mkdir -p "${DATA_DIR}"/{config,database,registry,redis,log,job_logs,ca_download,psc,secret}
+readonly DATA_ABS="$(cd "${DATA_DIR}" && pwd)"
+
+echo "[apply.sh] 階段 1：建立 namespace / PV / PVC / Secret / RBAC..."
 kubectl apply -f 00-namespace.yaml
+echo "  套用 hostPath PV（綁定 ${DATA_ABS}）..."
+sed "s|__HARBOR_DATA__|${DATA_ABS}|g" pv.template.yaml | kubectl apply -f -
 kubectl apply -f 01-pvc.yaml -f 02-secret.yaml -f 04-rbac.yaml
 
 echo "[apply.sh] 階段 2：執行 prepare Job（產生各 service 設定）..."

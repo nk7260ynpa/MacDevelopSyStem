@@ -1,0 +1,124 @@
+# Harbor hostPath 靜態 PV 範本。
+#
+# 此檔為「範本」，不可直接 kubectl apply：其中 __HARBOR_DATA__ 佔位符會由
+# apply.sh 於套用時以本機 harbor/harbor_data 的絕對路徑取代（sed），再交由
+# kubectl apply。如此 K8s 與 Docker Compose 共用同一份本機資料夾。
+#
+# 路徑對應（與 Docker Compose / build.sh 佈局一致）：
+#   - harbor-config   → harbor_data 根目錄
+#       prepare Job 以 subPath config/data/secret 寫入，故產出會落在
+#       harbor_data/{config,data,secret}，與 Docker build.sh 相同。
+#   - harbor-database → harbor_data/database
+#   - harbor-registry → harbor_data/registry
+#   - harbor-jobservice → harbor_data/job_logs
+#   - harbor-redis    → harbor_data/redis
+#
+# harbor-config 的 hostPath（根）會與其餘 4 個子目錄 PV 重疊，但各 Pod 實際
+# 讀寫不同子路徑，K8s 允許且不衝突。
+#
+# 重點設定：
+#   - hostPath + type: DirectoryOrCreate：直接綁本機目錄，缺少時自動建立。
+#   - storageClassName: manual：與 01-pvc.yaml 的 PVC 對應，採靜態綁定。
+#   - persistentVolumeReclaimPolicy: Retain：刪除 PVC/PV 不會清除本機資料。
+#   - claimRef：預先指定綁定的 PVC（namespace + name），確保 1:1 對應。
+#
+# 僅適用 Docker Desktop 單節點 K8s（hostPath 指向 macOS 本機路徑）。
+apiVersion: v1
+kind: PersistentVolume
+metadata:
+  name: harbor-config-pv
+  labels:
+    app: harbor
+spec:
+  capacity:
+    storage: 1Gi
+  accessModes:
+    - ReadWriteOnce
+  storageClassName: manual
+  persistentVolumeReclaimPolicy: Retain
+  hostPath:
+    path: __HARBOR_DATA__
+    type: DirectoryOrCreate
+  claimRef:
+    namespace: harbor
+    name: harbor-config
+---
+apiVersion: v1
+kind: PersistentVolume
+metadata:
+  name: harbor-database-pv
+  labels:
+    app: harbor
+spec:
+  capacity:
+    storage: 5Gi
+  accessModes:
+    - ReadWriteOnce
+  storageClassName: manual
+  persistentVolumeReclaimPolicy: Retain
+  hostPath:
+    path: __HARBOR_DATA__/database
+    type: DirectoryOrCreate
+  claimRef:
+    namespace: harbor
+    name: harbor-database
+---
+apiVersion: v1
+kind: PersistentVolume
+metadata:
+  name: harbor-registry-pv
+  labels:
+    app: harbor
+spec:
+  capacity:
+    storage: 20Gi
+  accessModes:
+    - ReadWriteOnce
+  storageClassName: manual
+  persistentVolumeReclaimPolicy: Retain
+  hostPath:
+    path: __HARBOR_DATA__/registry
+    type: DirectoryOrCreate
+  claimRef:
+    namespace: harbor
+    name: harbor-registry
+---
+apiVersion: v1
+kind: PersistentVolume
+metadata:
+  name: harbor-jobservice-pv
+  labels:
+    app: harbor
+spec:
+  capacity:
+    storage: 2Gi
+  accessModes:
+    - ReadWriteOnce
+  storageClassName: manual
+  persistentVolumeReclaimPolicy: Retain
+  hostPath:
+    path: __HARBOR_DATA__/job_logs
+    type: DirectoryOrCreate
+  claimRef:
+    namespace: harbor
+    name: harbor-jobservice
+---
+apiVersion: v1
+kind: PersistentVolume
+metadata:
+  name: harbor-redis-pv
+  labels:
+    app: harbor
+spec:
+  capacity:
+    storage: 1Gi
+  accessModes:
+    - ReadWriteOnce
+  storageClassName: manual
+  persistentVolumeReclaimPolicy: Retain
+  hostPath:
+    path: __HARBOR_DATA__/redis
+    type: DirectoryOrCreate
+  claimRef:
+    namespace: harbor
+    name: harbor-redis

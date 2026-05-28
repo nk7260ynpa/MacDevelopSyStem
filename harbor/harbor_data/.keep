@@ -1,0 +1,2 @@
+# 佔位檔：保留 harbor_data 資料夾於版控中（實際資料由 .gitignore 排除）。
+# Docker Compose 與 K8s（hostPath）共用此資料夾存放 Harbor 持久化資料。

@@ -4,8 +4,9 @@
 #   - 8080 -> 80（HTTP）
 #   - 2222 -> 22（SSH，避免與 macOS 本機 sshd 衝突）
 #
-# 資料持久化：使用 bind mount 至 ./data/{config,data,logs}，
+# 資料持久化：使用 bind mount 至 ../git_data/{config,data,logs}，
 # 由 ../run.sh 啟動前確保目錄已建立。
+# K8s 方案亦透過 hostPath 綁定同一份 ../git_data（兩種部署共用）。
 services:
   gitlab:
     build:
@@ -28,9 +29,9 @@ services:
         # 關閉 Prometheus 監控以節省資源（如需可移除此行）
         prometheus_monitoring['enable'] = false
     volumes:
-      - ./data/config:/etc/gitlab
-      - ./data/logs:/var/log/gitlab
-      - ./data/data:/var/opt/gitlab
+      - ../git_data/config:/etc/gitlab
+      - ../git_data/logs:/var/log/gitlab
+      - ../git_data/data:/var/opt/gitlab
     healthcheck:
       test: ["CMD", "curl", "-fsS", "http://localhost/-/health"]
       interval: 30s

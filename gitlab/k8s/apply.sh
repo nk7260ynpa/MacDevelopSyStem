@@ -20,7 +20,16 @@ fi
 
 echo "[apply.sh] 目前 kubectl context：$(kubectl config current-context)"
 
-for manifest in 00-namespace.yaml 01-pvc.yaml 02-deployment.yaml 03-service.yaml; do
+# 建立本機持久化資料夾（與 Docker Compose 共用同一份），並解析絕對路徑。
+readonly DATA_DIR="${SCRIPT_DIR}/../git_data"
+mkdir -p "${DATA_DIR}"/{config,logs,data}
+readonly DATA_ABS="$(cd "${DATA_DIR}" && pwd)"
+
+echo "[apply.sh] 套用 hostPath PV（綁定 ${DATA_ABS}）..."
+kubectl apply -f 00-namespace.yaml
+sed "s|__GITLAB_DATA__|${DATA_ABS}|g" pv.template.yaml | kubectl apply -f -
+
+for manifest in 01-pvc.yaml 02-deployment.yaml 03-service.yaml; do
   echo "[apply.sh] 套用 ${manifest}..."
   kubectl apply -f "${manifest}"
 done
