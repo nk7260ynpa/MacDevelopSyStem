@@ -1,8 +1,8 @@
 # GitLab hostPath 靜態 PV 範本。
 #
 # 此檔為「範本」，不可直接 kubectl apply：其中 __GITLAB_DATA__ 佔位符會由
-# apply.sh 於套用時以本機 gitlab/git_data 的絕對路徑取代（sed），再交由
-# kubectl apply。如此 K8s 與 Docker Compose 共用同一份本機資料夾。
+# apply.sh 於套用時以本機 gitlab/k8s/data 的絕對路徑取代（sed），再交由
+# kubectl apply。此為 K8s 專屬資料夾，與 Docker Compose 的 docker/data 不共用。
 #
 # 重點設定：
 #   - hostPath + type: DirectoryOrCreate：直接綁本機目錄，缺少時自動建立。

@@ -5,7 +5,7 @@
 #
 # 對外 port：8081 -> proxy:8080（HTTP）
 # 各 service 的設定檔由 ./build.sh 透過 goharbor/prepare image 從
-# harbor.yml 產生至 ../harbor_data/config/<service>/，請務必先執行 ./build.sh
+# harbor.yml 產生至 ./data/config/<service>/，請務必先執行 ./build.sh
 # 再以 ../run.sh 或 docker compose up -d 啟動。
 services:
   log:
@@ -20,12 +20,12 @@ services:
       - SETGID
       - SETUID
     volumes:
-      - ../harbor_data/log:/var/log/docker/:z
+      - ./data/log:/var/log/docker/:z
       - type: bind
-        source: ../harbor_data/config/log/logrotate.conf
+        source: ./data/config/log/logrotate.conf
         target: /etc/logrotate.d/logrotate.conf
       - type: bind
-        source: ../harbor_data/config/log/rsyslog_docker.conf
+        source: ./data/config/log/rsyslog_docker.conf
         target: /etc/rsyslog.d/rsyslog_docker.conf
     ports:
       - "127.0.0.1:1514:10514"
@@ -43,13 +43,13 @@ services:
       - SETGID
       - SETUID
     volumes:
-      - ../harbor_data/registry:/storage:z
-      - ../harbor_data/config/registry/:/etc/registry/:z
+      - ./data/registry:/storage:z
+      - ./data/config/registry/:/etc/registry/:z
       - type: bind
-        source: ../harbor_data/secret/registry/root.crt
+        source: ./data/secret/registry/root.crt
         target: /etc/registry/root.crt
       - type: bind
-        source: ../harbor_data/config/shared/trust-certificates
+        source: ./data/config/shared/trust-certificates
         target: /harbor_cust_cert
     networks:
       - harbor
@@ -65,7 +65,7 @@ services:
     image: goharbor/harbor-registryctl:v2.11.0
     container_name: registryctl
     env_file:
-      - ../harbor_data/config/registryctl/env
+      - ./data/config/registryctl/env
     restart: always
     cap_drop:
       - ALL
@@ -74,13 +74,13 @@ services:
       - SETGID
       - SETUID
     volumes:
-      - ../harbor_data/registry:/storage:z
-      - ../harbor_data/config/registry/:/etc/registry/:z
+      - ./data/registry:/storage:z
+      - ./data/config/registry/:/etc/registry/:z
       - type: bind
-        source: ../harbor_data/config/registryctl/config.yml
+        source: ./data/config/registryctl/config.yml
         target: /etc/registryctl/config.yml
       - type: bind
-        source: ../harbor_data/config/shared/trust-certificates
+        source: ./data/config/shared/trust-certificates
         target: /harbor_cust_cert
     networks:
       - harbor
@@ -105,11 +105,11 @@ services:
       - SETGID
       - SETUID
     volumes:
-      - ../harbor_data/database:/var/lib/postgresql/data:z
+      - ./data/database:/var/lib/postgresql/data:z
     networks:
       harbor:
     env_file:
-      - ../harbor_data/config/db/env
+      - ./data/config/db/env
     depends_on:
       - log
     logging:
@@ -129,7 +129,7 @@ services:
       - SETGID
       - SETUID
     volumes:
-      - ../harbor_data/redis:/var/lib/redis
+      - ./data/redis:/var/lib/redis
     networks:
       harbor:
     depends_on:
@@ -144,7 +144,7 @@ services:
     image: goharbor/harbor-core:v2.11.0
     container_name: harbor-core
     env_file:
-      - ../harbor_data/config/core/env
+      - ./data/config/core/env
     restart: always
     cap_drop:
       - ALL
@@ -152,23 +152,23 @@ services:
       - SETGID
       - SETUID
     volumes:
-      - ../harbor_data/ca_download/:/etc/core/ca/:z
-      - ../harbor_data/:/data/:z
-      - ../harbor_data/config/core/certificates/:/etc/core/certificates/:z
+      - ./data/ca_download/:/etc/core/ca/:z
+      - ./data/:/data/:z
+      - ./data/config/core/certificates/:/etc/core/certificates/:z
       - type: bind
-        source: ../harbor_data/config/core/app.conf
+        source: ./data/config/core/app.conf
         target: /etc/core/app.conf
       - type: bind
-        source: ../harbor_data/secret/core/private_key.pem
+        source: ./data/secret/core/private_key.pem
         target: /etc/core/private_key.pem
       - type: bind
-        source: ../harbor_data/secret/keys/secretkey
+        source: ./data/secret/keys/secretkey
         target: /etc/core/key
       - type: bind
-        source: ../harbor_data/psc/
+        source: ./data/psc/
         target: /etc/core/token/
       - type: bind
-        source: ../harbor_data/config/shared/trust-certificates
+        source: ./data/config/shared/trust-certificates
         target: /harbor_cust_cert
     networks:
       harbor:
@@ -196,7 +196,7 @@ services:
       - NET_BIND_SERVICE
     volumes:
       - type: bind
-        source: ../harbor_data/config/portal/nginx.conf
+        source: ./data/config/portal/nginx.conf
         target: /etc/nginx/nginx.conf
     networks:
       - harbor
@@ -212,7 +212,7 @@ services:
     image: goharbor/harbor-jobservice:v2.11.0
     container_name: harbor-jobservice
     env_file:
-      - ../harbor_data/config/jobservice/env
+      - ./data/config/jobservice/env
     restart: always
     cap_drop:
       - ALL
@@ -221,12 +221,12 @@ services:
       - SETGID
       - SETUID
     volumes:
-      - ../harbor_data/job_logs:/var/log/jobs:z
+      - ./data/job_logs:/var/log/jobs:z
       - type: bind
-        source: ../harbor_data/config/jobservice/config.yml
+        source: ./data/config/jobservice/config.yml
         target: /etc/jobservice/config.yml
       - type: bind
-        source: ../harbor_data/config/shared/trust-certificates
+        source: ./data/config/shared/trust-certificates
         target: /harbor_cust_cert
     networks:
       - harbor
@@ -250,9 +250,9 @@ services:
       - SETUID
       - NET_BIND_SERVICE
     volumes:
-      - ../harbor_data/config/nginx:/etc/nginx:z
+      - ./data/config/nginx:/etc/nginx:z
       - type: bind
-        source: ../harbor_data/config/shared/trust-certificates
+        source: ./data/config/shared/trust-certificates
         target: /harbor_cust_cert
     networks:
       - harbor

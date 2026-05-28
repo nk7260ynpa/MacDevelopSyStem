@@ -20,8 +20,8 @@ fi
 
 echo "[apply.sh] 目前 kubectl context：$(kubectl config current-context)"
 
-# 建立本機持久化資料夾（與 Docker Compose 共用同一份），並解析絕對路徑。
-readonly DATA_DIR="${SCRIPT_DIR}/../git_data"
+# 建立 K8s 專屬本機持久化資料夾（與 Docker Compose 各自獨立，不共用），並解析絕對路徑。
+readonly DATA_DIR="${SCRIPT_DIR}/data"
 mkdir -p "${DATA_DIR}"/{config,logs,data}
 readonly DATA_ABS="$(cd "${DATA_DIR}" && pwd)"
 

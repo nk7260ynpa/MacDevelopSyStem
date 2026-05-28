@@ -32,13 +32,19 @@ Icon?
 docker-compose.override.yaml
 docker-compose.override.yml
 
-# GitLab 持久化資料（Docker 與 K8s 共用，僅保留 .keep）
-gitlab/git_data/*
-!gitlab/git_data/.keep
+# 持久化資料（Docker 與 K8s 各自獨立，僅保留 .keep）
+gitlab/docker/data/*
+!gitlab/docker/data/.keep
+gitlab/k8s/data/*
+!gitlab/k8s/data/.keep
+harbor/docker/data/*
+!harbor/docker/data/.keep
+harbor/k8s/data/*
+!harbor/k8s/data/.keep
 
-# Harbor 持久化資料與 prepare 產出之設定/金鑰（Docker 與 K8s 共用，僅保留 .keep）
-harbor/harbor_data/*
-!harbor/harbor_data/.keep
+# 舊版共用資料夾已停用，整夾忽略（確認無需保留後可手動刪除）
+gitlab/git_data/
+harbor/harbor_data/
 
 # Python（如後續加入腳本）
 __pycache__/

@@ -25,12 +25,12 @@ MacDevelopSyStem/
 ├── .gitignore             # Git 忽略清單
 ├── gitlab/                # GitLab 部署設定
 │   ├── run.sh             # Docker Compose 啟動入口（up/logs/stop/status）
-│   ├── git_data/          # 持久化資料（Docker 與 K8s 共用，僅 .keep 納入版控）
 │   ├── docker/            # Docker Compose 方案
 │   │   ├── build.sh
 │   │   ├── Dockerfile
 │   │   ├── docker-compose.yaml
-│   │   └── .env.example
+│   │   ├── .env.example
+│   │   └── data/          # Docker 專屬持久化資料（僅 .keep 納入版控）
 │   └── k8s/               # Kubernetes 原生 Manifests 方案
 │       ├── apply.sh
 │       ├── delete.sh
@@ -38,16 +38,17 @@ MacDevelopSyStem/
 │       ├── 00-namespace.yaml
 │       ├── 01-pvc.yaml
 │       ├── 02-deployment.yaml
-│       └── 03-service.yaml
+│       ├── 03-service.yaml
+│       └── data/          # K8s 專屬持久化資料（僅 .keep 納入版控）
 ├── harbor/                # Harbor 部署設定
 │   ├── run.sh             # Docker Compose 啟動入口（up/logs/stop/status）
-│   ├── harbor_data/       # 持久化資料（Docker 與 K8s 共用，僅 .keep 納入版控）
 │   ├── docker/            # Docker Compose 方案
 │   │   ├── build.sh       # 拉 image + 用 prepare 產生各 service 設定
 │   │   ├── Dockerfile
 │   │   ├── docker-compose.yaml
 │   │   ├── harbor.yml     # Harbor 設定範本（供 prepare 讀取）
-│   │   └── .env.example
+│   │   ├── .env.example
+│   │   └── data/          # Docker 專屬持久化資料（僅 .keep 納入版控）
 │   └── k8s/               # Kubernetes 原生 Manifests 方案
 │       ├── apply.sh
 │       ├── delete.sh
@@ -58,26 +59,35 @@ MacDevelopSyStem/
 │       ├── 03-prepare-job.yaml
 │       ├── 04-rbac.yaml
 │       ├── 05-init-configmaps-job.yaml
-│       └── 10~17-*.yaml   # 8 個 service（log/redis/db/registry/core/...）
+│       ├── 10~17-*.yaml   # 8 個 service（log/redis/db/registry/core/...）
+│       └── data/          # K8s 專屬持久化資料（僅 .keep 納入版控）
 └── logs/                  # 各工具運行日誌（執行時建立）
 ```
 
 ### 資料持久化設計
 
-每個工具的持久化資料集中於服務目錄下的專屬資料夾（GitLab → `gitlab/git_data/`、
-Harbor → `harbor/harbor_data/`），便於集中備份與遷移：
+Docker Compose 與 Kubernetes **各自擁有獨立的 `data` 資料夾，不共用儲存**，皆位於各方案
+子目錄下：
 
-- **Docker Compose**：以 bind mount 直接掛載該資料夾。
-- **Kubernetes**：透過 `hostPath` 靜態 PV 綁定「同一份」資料夾；絕對路徑由 `apply.sh`
+| 工具 | Docker 方案 | K8s 方案 |
+| --- | --- | --- |
+| GitLab | `gitlab/docker/data/` | `gitlab/k8s/data/` |
+| Harbor | `harbor/docker/data/` | `harbor/k8s/data/` |
+
+- **Docker Compose**：以 bind mount 直接掛載自己的 `docker/data`。
+- **Kubernetes**：透過 `hostPath` 靜態 PV 綁定自己的 `k8s/data`；絕對路徑由 `apply.sh`
   於套用時動態注入 `pv.template.yaml`（佔位符 `__GITLAB_DATA__` / `__HARBOR_DATA__`），
-  PV 採 `storageClassName: manual` 與 `reclaimPolicy: Retain`。
-- 資料夾以 `.keep` 納入版控，實際內容由 `.gitignore` 排除。
+  PV 採 `storageClassName: manual` 與 `reclaimPolicy: Retain`，每個 PV 各綁獨立子目錄、互不重疊。
+- 各 `data` 資料夾以 `.keep` 納入版控，實際內容由 `.gitignore` 排除。
 
 > 限制與注意事項：
 >
 > - K8s 的 hostPath 方案僅適用 **Docker Desktop 內建單節點 K8s**（kind / minikube 的
 >   節點檔案系統與 macOS 本機不同，無法直接套用）。
-> - Docker 與 K8s 共用同一份資料夾，**請勿同時啟動兩種部署**指向同一工具，避免資料衝突。
+> - Docker 與 K8s 為兩份獨立資料，可獨立啟動、互不干擾（同工具的兩種方案 port 已錯開），
+>   但兩份資料**不會自動同步**；同一工具在不同方案下視為各自獨立的環境。
+> - 舊版共用資料夾 `gitlab/git_data/`、`harbor/harbor_data/` 已停用並由 `.gitignore` 整夾忽略，
+>   確認無需保留後可手動刪除。
 
 ## 系統需求
 
@@ -130,7 +140,7 @@ cd gitlab/docker
   docker exec gitlab cat /etc/gitlab/initial_root_password
   ```
 
-- 持久化資料位置：`gitlab/git_data/{config,logs,data}`（已於 `.gitignore` 排除，K8s 方案共用同一份）
+- 持久化資料位置：`gitlab/docker/data/{config,logs,data}`（已於 `.gitignore` 排除；K8s 方案另有獨立的 `gitlab/k8s/data`）
 
 > 首次啟動 GitLab 需 3–5 分鐘完成自我初始化，期間 `docker ps` 會顯示 `health: starting`，請耐心等待。
 
@@ -164,10 +174,10 @@ kubectl -n gitlab get pods -w
 清除全部資源：
 
 ```bash
-./delete.sh              # 刪除 gitlab namespace 與 hostPath PV（本機 git_data 資料保留）
+./delete.sh              # 刪除 gitlab namespace 與 hostPath PV（本機 k8s/data 資料保留）
 ```
 
-> 本方案的 hostPath PV 綁定 macOS 本機 `gitlab/git_data`，僅適用 **Docker Desktop 內建 K8s**；
+> 本方案的 hostPath PV 綁定 macOS 本機 `gitlab/k8s/data`，僅適用 **Docker Desktop 內建 K8s**；
 > kind / minikube 的節點檔案系統與本機不同，無法直接套用此 PV 設定。
 
 ### 兩種方案的取捨
@@ -193,7 +203,7 @@ Docker Compose 與 K8s 兩種方案。版本固定 `v2.11.0`。
 
 ```bash
 cd harbor/docker
-./build.sh               # 拉 v2.11.0 image，並用 prepare 產生 ../harbor_data/config/
+./build.sh               # 拉 v2.11.0 image，並用 prepare 產生 ./data/config/
 ```
 
 啟動：
@@ -216,7 +226,7 @@ cd harbor
 - 網頁：<http://localhost:8081>
 - 預設帳號：`admin` / `Harbor12345`
 - **⚠ 首次登入後請立即修改密碼。**
-- 持久化資料位置：`harbor/harbor_data/`（已於 `.gitignore` 排除，K8s 方案共用同一份）
+- 持久化資料位置：`harbor/docker/data/`（已於 `.gitignore` 排除；K8s 方案另有獨立的 `harbor/k8s/data`）
 
 > 修改 `harbor/docker/harbor.yml` 後，必須重新執行 `./build.sh` 讓 prepare 重生設定，
 > 再 `./run.sh stop && ./run.sh up` 才會生效。
@@ -253,7 +263,7 @@ kubectl -n harbor get pods -w
 清除全部資源：
 
 ```bash
-./delete.sh              # 刪除 harbor namespace 與 hostPath PV（本機 harbor_data 資料保留）
+./delete.sh              # 刪除 harbor namespace 與 hostPath PV（本機 k8s/data 資料保留）
 ```
 
 > 注意：K8s 方案功能完整但流程較長，僅 prepare 與 init Job 即需 1-2 分鐘；後續 8 個 service

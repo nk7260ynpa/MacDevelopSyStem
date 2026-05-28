@@ -6,7 +6,7 @@
 #   - harbor-redis    ：Redis 持久化資料
 #
 # storageClassName: manual —— 停用動態 provisioner，改綁 pv.template.yaml 定義的
-# hostPath 靜態 PV（指向本機 harbor/harbor_data，與 Docker Compose 共用同一份資料）。
+# hostPath 靜態 PV（指向本機 harbor/k8s/data，K8s 專屬，與 Docker Compose 不共用）。
 apiVersion: v1
 kind: PersistentVolumeClaim
 metadata:

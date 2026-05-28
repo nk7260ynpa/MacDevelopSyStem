@@ -24,9 +24,10 @@ fi
 
 echo "[apply.sh] 目前 kubectl context：$(kubectl config current-context)"
 
-# 建立本機持久化資料夾（與 Docker Compose 共用同一份），並解析絕對路徑。
-readonly DATA_DIR="${SCRIPT_DIR}/../harbor_data"
-mkdir -p "${DATA_DIR}"/{config,database,registry,redis,log,job_logs,ca_download,psc,secret}
+# 建立 K8s 專屬本機持久化資料夾（與 Docker Compose 各自獨立，不共用），並解析絕對路徑。
+# 僅需建立由 PV 承載的子目錄；secret/data 由 prepare Job 寫進 config 夾內。
+readonly DATA_DIR="${SCRIPT_DIR}/data"
+mkdir -p "${DATA_DIR}"/{config,database,registry,redis,job_logs}
 readonly DATA_ABS="$(cd "${DATA_DIR}" && pwd)"
 
 echo "[apply.sh] 階段 1：建立 namespace / PV / PVC / Secret / RBAC..."
