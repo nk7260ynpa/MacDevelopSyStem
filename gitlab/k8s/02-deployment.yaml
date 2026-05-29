@@ -70,7 +70,7 @@ spec:
               memory: "1536Mi"   # 1.5Gi
             limits:
               cpu: "2"           # CPU 為可壓縮資源，limit 維持 2 以加速首次初始化
-              memory: "3Gi"      # 極限可運作下限；若反覆 OOMKilled 先調回 4Gi
+              memory: "4Gi"      # 常駐上限：在最小化基礎上保留維運餘裕，避免 gitlab-rails runner/console/rake 等臨時行程觸發 OOM
           readinessProbe:
             httpGet:
               path: /-/readiness
