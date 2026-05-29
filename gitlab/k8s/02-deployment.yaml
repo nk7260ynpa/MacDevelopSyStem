@@ -41,6 +41,15 @@ spec:
                 gitlab_rails['gitlab_shell_ssh_port'] = 30022
                 letsencrypt['enable'] = false
                 prometheus_monitoring['enable'] = false
+                # --- 極限壓縮：關閉非必要元件、縮減 worker（開發取向，非生產規格）---
+                puma['worker_processes'] = 0          # 單進程模式，記憶體最低
+                puma['min_threads'] = 1
+                puma['max_threads'] = 4
+                sidekiq['max_concurrency'] = 5        # 降低背景任務並發
+                postgresql['shared_buffers'] = "128MB"
+                postgresql['max_connections'] = 100
+                registry['enable'] = false            # 已有獨立 Harbor，關閉內建 registry
+                gitlab_kas['enable'] = false          # 關閉 K8s Agent Server
           volumeMounts:
             - name: config
               mountPath: /etc/gitlab
@@ -50,11 +59,11 @@ spec:
               mountPath: /var/opt/gitlab
           resources:
             requests:
-              cpu: "500m"
-              memory: "2Gi"
+              cpu: "250m"
+              memory: "1536Mi"   # 1.5Gi
             limits:
-              cpu: "2"
-              memory: "6Gi"
+              cpu: "2"           # CPU 為可壓縮資源，limit 維持 2 以加速首次初始化
+              memory: "3Gi"      # 極限可運作下限；若反覆 OOMKilled 先調回 4Gi
           readinessProbe:
             httpGet:
               path: /-/readiness
@@ -67,7 +76,7 @@ spec:
             httpGet:
               path: /-/health
               port: http
-            initialDelaySeconds: 300
+            initialDelaySeconds: 600
             periodSeconds: 60
             timeoutSeconds: 10
             failureThreshold: 5

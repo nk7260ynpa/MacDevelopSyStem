@@ -51,7 +51,7 @@ metadata:
     app: harbor
 spec:
   capacity:
-    storage: 5Gi
+    storage: 2Gi
   accessModes:
     - ReadWriteOnce
   storageClassName: manual
@@ -71,7 +71,7 @@ metadata:
     app: harbor
 spec:
   capacity:
-    storage: 20Gi
+    storage: 8Gi
   accessModes:
     - ReadWriteOnce
   storageClassName: manual
@@ -91,7 +91,7 @@ metadata:
     app: harbor
 spec:
   capacity:
-    storage: 2Gi
+    storage: 1Gi
   accessModes:
     - ReadWriteOnce
   storageClassName: manual

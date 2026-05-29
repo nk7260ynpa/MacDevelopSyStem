@@ -31,7 +31,7 @@ spec:
     - ReadWriteOnce
   resources:
     requests:
-      storage: 5Gi
+      storage: 2Gi
 ---
 apiVersion: v1
 kind: PersistentVolumeClaim
@@ -44,7 +44,7 @@ spec:
     - ReadWriteOnce
   resources:
     requests:
-      storage: 20Gi
+      storage: 8Gi
 ---
 apiVersion: v1
 kind: PersistentVolumeClaim
@@ -57,7 +57,7 @@ spec:
     - ReadWriteOnce
   resources:
     requests:
-      storage: 2Gi
+      storage: 1Gi
 ---
 apiVersion: v1
 kind: PersistentVolumeClaim
