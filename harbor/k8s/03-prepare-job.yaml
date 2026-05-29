@@ -27,13 +27,18 @@ spec:
         - name: prepare
           image: goharbor/prepare:v2.11.0
           imagePullPolicy: IfNotPresent
+          # goharbor/prepare 影像的 ENTRYPOINT 為 ["python3", "main.py"]，
+          # prepare 是其 click 子指令（無獨立 prepare 執行檔）；故須以
+          # `python3 main.py prepare` 呼叫。另 prepare 結尾會輸出 docker-compose.yml
+          # 到 /compose_location（K8s 不使用，僅需該目錄存在以免寫檔失敗）。
           command:
             - /bin/sh
             - -c
             - |
               set -eux
-              mkdir -p /data /secret
-              prepare --conf /input/harbor.yml
+              mkdir -p /data /secret /compose_location
+              cd /usr/src/app
+              python3 main.py prepare --conf /input/harbor.yml
           volumeMounts:
             - name: harbor-yml
               mountPath: /input
