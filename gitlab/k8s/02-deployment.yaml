@@ -38,6 +38,13 @@ spec:
             - name: GITLAB_OMNIBUS_CONFIG
               value: |
                 external_url 'http://localhost:30080'
+                # 容器內 nginx 監聽 80（對應 containerPort http=80 與 Service targetPort）；
+                # external_url 的 :30080 僅供 GitLab 產生對外連結，對外存取由 NodePort 30080→80 轉送。
+                # 未設此項時 nginx 會直接聽 external_url 的 30080，導致探針/Service 打 80 連不上而永不就緒。
+                nginx['listen_port'] = 80
+                # /-/health|readiness|liveness 預設僅允許 127.0.0.0/8；K8s kubelet 探針來源為
+                # 節點 / Pod 網段（非 loopback），未放行會回 404 而永不就緒。開發叢集放行全部。
+                gitlab_rails['monitoring_whitelist'] = ['0.0.0.0/0']
                 gitlab_rails['gitlab_shell_ssh_port'] = 30022
                 letsencrypt['enable'] = false
                 prometheus_monitoring['enable'] = false
