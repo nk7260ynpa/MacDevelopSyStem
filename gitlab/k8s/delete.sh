@@ -6,8 +6,8 @@
 #   ./delete.sh
 #
 # 移除 namespace 會連帶刪除其下所有 PVC、Deployment、Service。
-# hostPath 靜態 PV 為叢集層級資源，不隨 namespace 刪除，需另外移除；
-# 其 reclaimPolicy=Retain，刪除 PV 物件不會清除本機 k8s/data 內的實際資料。
+# PVC 為動態建立（StorageClass reclaimPolicy=Delete），刪除 PVC 時對應 PV 與
+# 節點本機卷一併清除，無須另外刪 PV。
 
 set -euo pipefail
 
@@ -20,10 +20,7 @@ if ! command -v kubectl >/dev/null 2>&1; then
 fi
 
 echo "[delete.sh] 目前 kubectl context：$(kubectl config current-context)"
-echo "[delete.sh] 刪除 namespace gitlab（連同其下所有資源）..."
+echo "[delete.sh] 刪除 namespace gitlab（連同其下所有 PVC/PV 與資料）..."
 kubectl delete namespace gitlab --ignore-not-found=true
-
-echo "[delete.sh] 刪除 hostPath PV（本機 k8s/data 資料保留）..."
-kubectl delete pv gitlab-config-pv gitlab-logs-pv gitlab-data-pv --ignore-not-found=true
 
 echo "[delete.sh] 完成。"
