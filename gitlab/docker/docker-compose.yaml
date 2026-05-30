@@ -17,17 +17,36 @@ services:
     hostname: gitlab.local
     restart: unless-stopped
     shm_size: '256m'
+    # 容器記憶體上限 4G（搭配上方 GITLAB_OMNIBUS_CONFIG 瘦身，常駐約 2.5-3G）。
+    # 非 swarm 的 docker compose up 下，deploy.resources.limits.memory 有效（套為 cgroup limit）；
+    # reservations.memory 在非 swarm 會被忽略，故不設。不限 CPU：首次 reconfigure 吃 CPU，不限可加速初始化。
+    deploy:
+      resources:
+        limits:
+          memory: 4G
     ports:
       - "8080:80"
       - "2222:22"
     environment:
       GITLAB_OMNIBUS_CONFIG: |
         external_url 'http://localhost:8080'
+        # 讓容器內 nginx 聽 80，對齊 ports「8080:80」與 healthcheck 的 :80；
+        # 否則 nginx 會依 external_url 預設聽 8080，導致對外映射與 healthcheck 打不到而卡在 starting。
+        nginx['listen_port'] = 80
         gitlab_rails['gitlab_shell_ssh_port'] = 2222
         # 關閉 Let's Encrypt（本機 HTTP 環境用不到）
         letsencrypt['enable'] = false
         # 關閉 Prometheus 監控以節省資源（如需可移除此行）
         prometheus_monitoring['enable'] = false
+        # --- 資源瘦身（開發/備份取向，非生產規格；比照 k8s 版 02-deployment.yaml）---
+        puma['worker_processes'] = 0          # 單進程模式，記憶體最低
+        puma['min_threads'] = 1
+        puma['max_threads'] = 4
+        sidekiq['max_concurrency'] = 5        # 降低背景任務並發
+        postgresql['shared_buffers'] = "128MB"
+        postgresql['max_connections'] = 100
+        registry['enable'] = false            # 已有獨立 Harbor，關閉內建 registry
+        gitlab_kas['enable'] = false          # 關閉 K8s Agent Server
     volumes:
       - ./data/config:/etc/gitlab
       - ./data/logs:/var/log/gitlab

@@ -148,6 +148,10 @@ cd gitlab/docker
 
 > 首次啟動 GitLab 需 3–5 分鐘完成自我初始化，期間 `docker ps` 會顯示 `health: starting`，請耐心等待。
 
+> 資源設定（最小化）：已設容器記憶體上限 4G，並比照 K8s 版以單進程 Puma 運行、關閉內建
+> Registry（改用 Harbor）／KAS／Prometheus 監控，常駐約 2.5–3 GB。適合輕量備份倉庫用途；
+> 屬開發取向、非生產規格。
+
 ### 透過 Kubernetes
 
 前置：本機 K8s 叢集已就緒（`kubectl get nodes` 可成功列出節點）。
