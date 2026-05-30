@@ -245,6 +245,16 @@ cd harbor
 > 修改 `harbor/docker/harbor.yml` 後，必須重新執行 `./build.sh` 讓 prepare 重生設定，
 > 再 `./run.sh stop && ./run.sh up` 才會生效。
 
+實作上針對 macOS / Docker Desktop 環境做了三項穩定性處理（皆已內建於設定，平常無需手動介入）：
+
+- **固定 compose 專案名為 `harbor`**：`docker-compose.yaml` 以 `name: harbor` 避免與其他同放在
+  `docker/` 目錄、專案名同被推導為 `docker` 的專案互相視為 orphan。
+- **log 就緒把關**：各 service 以 syslog driver 將 log 送往 `harbor-log:1514`，故其 `depends_on`
+  對 `log` 採 `condition: service_healthy`，等 harbor-log 真正就緒才啟動，避免冷啟動時
+  `logging driver: connection refused`（在 Apple Silicon 以模擬執行 amd64 image 時尤其關鍵）。
+- **registry 的 `root.crt`**：改由 registry 設定目錄一併掛入，不另以單檔疊掛，以避開
+  virtiofs「於目錄掛載上再疊單檔掛載」的 mountpoint 衝突；此複製動作已內建於 `./build.sh`。
+
 ### 透過 Kubernetes
 
 前置：本機 K8s 叢集已就緒、`kubectl get nodes` 可成功。

@@ -32,13 +32,28 @@ echo "[build.sh] 拉取 Harbor ${HARBOR_VERSION} 各 service image..."
 docker compose pull
 
 echo "[build.sh] 使用 goharbor/prepare:${HARBOR_VERSION} 從 harbor.yml 產生設定..."
+# prepare 最後會額外產生它自己版本的 docker-compose.yml 至 /compose_location；
+# 本專案改用手寫的 docker-compose.yaml，故掛一個拋棄式目錄承接該檔並忽略，
+# 否則 prepare 會因找不到 /compose_location 而以例外中止（即使所需設定皆已產生）。
+readonly COMPOSE_GEN_DIR="${DATA_DIR}/.compose_gen"
+mkdir -p "${COMPOSE_GEN_DIR}"
 docker run --rm \
   -v "${SCRIPT_DIR}/harbor.yml:/input/harbor.yml" \
   -v "${DATA_DIR}/config:/config" \
   -v "${DATA_DIR}:/data" \
   -v "${DATA_DIR}/secret:/secret" \
+  -v "${COMPOSE_GEN_DIR}:/compose_location" \
   "goharbor/prepare:${HARBOR_VERSION}" \
   prepare --conf /input/harbor.yml
+# 拋棄 prepare 產生的 compose 檔，避免與手寫 docker-compose.yaml 混淆。
+rm -rf "${COMPOSE_GEN_DIR}"
+
+# prepare 會把 registry 的 token 根憑證產生在 secret/registry/root.crt。
+# 為避開 Docker Desktop（macOS virtiofs）「於目錄掛載上再疊單檔掛載」的衝突，
+# docker-compose.yaml 不再單獨疊掛 root.crt，而是改由 registry 設定目錄一併帶入，
+# 故在此把 root.crt 複製進 data/config/registry/，使 /etc/registry/root.crt 可用。
+echo "[build.sh] 將 root.crt 佈署至 registry 設定目錄..."
+cp -f "${DATA_DIR}/secret/registry/root.crt" "${DATA_DIR}/config/registry/root.crt"
 
 echo ""
 echo "[build.sh] 完成。可使用 ../run.sh 啟動 Harbor。"

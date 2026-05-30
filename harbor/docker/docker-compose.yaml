@@ -7,6 +7,17 @@
 # 各 service 的設定檔由 ./build.sh 透過 goharbor/prepare image 從
 # harbor.yml 產生至 ./data/config/<service>/，請務必先執行 ./build.sh
 # 再以 ../run.sh 或 docker compose up -d 啟動。
+#
+# 重要設計：
+#   - 以 name: harbor 固定 compose 專案名，避免與其他同樣放在 docker/ 目錄、
+#     專案名同被推導為 "docker" 的專案互相視為 orphan 而誤刪。
+#   - 所有 service 透過 syslog driver 將 log 送往 harbor-log 的 1514 埠，
+#     因此除 log 本身外，全部 service 的 depends_on 對 log 採
+#     condition: service_healthy，等 harbor-log 的 syslog 真正就緒後才啟動，
+#     避免冷啟動時 "logging driver: connection refused" 的搶跑問題
+#     （在 Apple Silicon 以模擬執行 amd64 image 時 log 就緒較慢，尤其關鍵）。
+name: harbor
+
 services:
   log:
     image: goharbor/harbor-log:v2.11.0
@@ -44,17 +55,18 @@ services:
       - SETUID
     volumes:
       - ./data/registry:/storage:z
+      # root.crt 直接放在 registry 設定目錄內，靠此目錄掛載一併帶入
+      # /etc/registry/root.crt；不另以單檔疊掛，以避開 Docker Desktop
+      # （macOS virtiofs）「於目錄掛載上再疊單檔掛載」的 mountpoint 衝突。
       - ./data/config/registry/:/etc/registry/:z
-      - type: bind
-        source: ./data/secret/registry/root.crt
-        target: /etc/registry/root.crt
       - type: bind
         source: ./data/config/shared/trust-certificates
         target: /harbor_cust_cert
     networks:
       - harbor
     depends_on:
-      - log
+      log:
+        condition: service_healthy
     logging:
       driver: "syslog"
       options:
@@ -85,8 +97,10 @@ services:
     networks:
       - harbor
     depends_on:
-      - log
-      - registry
+      log:
+        condition: service_healthy
+      registry:
+        condition: service_started
     logging:
       driver: "syslog"
       options:
@@ -111,7 +125,8 @@ services:
     env_file:
       - ./data/config/db/env
     depends_on:
-      - log
+      log:
+        condition: service_healthy
     logging:
       driver: "syslog"
       options:
@@ -133,7 +148,8 @@ services:
     networks:
       harbor:
     depends_on:
-      - log
+      log:
+        condition: service_healthy
     logging:
       driver: "syslog"
       options:
@@ -173,10 +189,14 @@ services:
     networks:
       harbor:
     depends_on:
-      - log
-      - registry
-      - redis
-      - postgresql
+      log:
+        condition: service_healthy
+      registry:
+        condition: service_started
+      redis:
+        condition: service_started
+      postgresql:
+        condition: service_started
     logging:
       driver: "syslog"
       options:
@@ -201,7 +221,8 @@ services:
     networks:
       - harbor
     depends_on:
-      - log
+      log:
+        condition: service_healthy
     logging:
       driver: "syslog"
       options:
@@ -231,7 +252,10 @@ services:
     networks:
       - harbor
     depends_on:
-      - core
+      log:
+        condition: service_healthy
+      core:
+        condition: service_started
     logging:
       driver: "syslog"
       options:
@@ -259,10 +283,14 @@ services:
     ports:
       - "8081:8080"
     depends_on:
-      - registry
-      - core
-      - portal
-      - log
+      log:
+        condition: service_healthy
+      registry:
+        condition: service_started
+      core:
+        condition: service_started
+      portal:
+        condition: service_started
     logging:
       driver: "syslog"
       options:

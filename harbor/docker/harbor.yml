@@ -32,6 +32,9 @@ trivy:
 
 jobservice:
   max_job_workers: 10
+  job_loggers:
+    - STD_OUTPUT
+    - FILE
   logger_sweeper_duration: 1
 
 notification:
