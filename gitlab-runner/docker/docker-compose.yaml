@@ -1,0 +1,22 @@
+# 顯式指定 compose 專案名稱，避免與其他同樣放在 docker/ 目錄的子專案
+# （預設專案名會被推導為目錄名 docker）互相視為 orphan。
+name: gitlab-runner
+
+services:
+  gitlab-runner:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    image: macdev/gitlab-runner:latest
+    container_name: gitlab-runner
+    restart: unless-stopped
+    volumes:
+      # Runner 設定（註冊後的 config.toml，含認證權杖）以 bind mount 保存，
+      # 已由 .gitignore 排除，不納入版控。
+      - ./data:/etc/gitlab-runner
+      # docker executor 透過主機 Docker daemon 啟動 job 容器（sibling containers）
+      - /var/run/docker.sock:/var/run/docker.sock
+    extra_hosts:
+      # 讓 runner 容器以 host.docker.internal 連回主機上發佈的 GitLab（8080 埠）。
+      # macOS/Docker Desktop 內建此名稱，加上 host-gateway 以兼容 Linux。
+      - "host.docker.internal:host-gateway"
