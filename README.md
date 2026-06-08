@@ -338,6 +338,36 @@ cd harbor
 - **registry 的 `root.crt`**：改由 registry 設定目錄一併掛入，不另以單檔疊掛，以避開
   virtiofs「於目錄掛載上再疊單檔掛載」的 mountpoint 衝突；此複製動作已內建於 `./build.sh`。
 
+#### 開機自動啟動（選用）
+
+主機重開機時，Docker daemon 會依各容器的 `restart:always` **各自**恢復容器，此路徑
+繞過了 compose 的 `depends_on` 編排，導致眾 service 搶在 `harbor-log` 就緒前啟動，
+syslog logging driver 連不上 `1514` 而以 `ExitCode 128` 集體退出（即上述「log 就緒把關」
+僅在走 `docker compose up` 時生效，daemon 自動恢復時不生效）。
+
+`harbor/boot/` 提供 macOS LaunchAgent 方案根治此問題：登入後等待 Docker daemon 就緒，
+再走 `run.sh`（`docker compose up -d`）以正確順序拉起，確保 `harbor-log` 先 healthy。
+
+```bash
+cd harbor/boot
+./install.sh             # 安裝並載入 LaunchAgent（com.chen.harbor-autostart）
+./uninstall.sh           # 停用並移除（不影響執行中的容器）
+```
+
+| 檔案 | 說明 |
+| --- | --- |
+| `harbor-autostart.sh` | 開機腳本：輪詢等待 Docker daemon（上限 300s）後執行 `run.sh` |
+| `com.chen.harbor-autostart.plist` | LaunchAgent 範本，`__HARBOR_DIR__` 由 `install.sh` 替換 |
+| `install.sh` / `uninstall.sh` | 安裝（`launchctl bootstrap`）／卸載（`launchctl bootout`） |
+
+```bash
+# 不必重開機，立即手動測試一次
+launchctl kickstart -k gui/$(id -u)/com.chen.harbor-autostart
+tail -f harbor/logs/harbor-autostart.log      # 觀察執行記錄
+```
+
+> log 寫於 `harbor/logs/`（已於 `.gitignore` 排除）。
+
 ### 透過 Kubernetes
 
 前置：本機 K8s 叢集已就緒、`kubectl get nodes` 可成功。
