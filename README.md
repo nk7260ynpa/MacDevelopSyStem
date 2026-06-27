@@ -338,32 +338,42 @@ cd harbor
 - **registry 的 `root.crt`**：改由 registry 設定目錄一併掛入，不另以單檔疊掛，以避開
   virtiofs「於目錄掛載上再疊單檔掛載」的 mountpoint 衝突；此複製動作已內建於 `./build.sh`。
 
-#### 開機自動啟動（選用）
+#### 開機自動啟動與守護巡檢（選用）
 
 主機重開機時，Docker daemon 會依各容器的 `restart:always` **各自**恢復容器，此路徑
 繞過了 compose 的 `depends_on` 編排，導致眾 service 搶在 `harbor-log` 就緒前啟動，
 syslog logging driver 連不上 `1514` 而以 `ExitCode 128` 集體退出（即上述「log 就緒把關」
 僅在走 `docker compose up` 時生效，daemon 自動恢復時不生效）。
 
-`harbor/boot/` 提供 macOS LaunchAgent 方案根治此問題：登入後等待 Docker daemon 就緒，
-再走 `run.sh`（`docker compose up -d`）以正確順序拉起，確保 `harbor-log` 先 healthy。
+`harbor/boot/` 提供兩個互補的 macOS LaunchAgent 根治此問題：
+
+- **autostart**（`RunAtLoad`）：使用者登入（主機重開機）後等待 Docker daemon 就緒，
+  再走 `run.sh`（`docker compose up -d`）以正確順序拉起，確保 `harbor-log` 先 healthy。
+- **watchdog**（`StartInterval` 120s）：補強 autostart 的盲區——Docker daemon 若**單獨
+  重啟**（Docker Desktop 更新、手動重啟、daemon 崩潰恢復）並不會重新登入、故不觸發
+  autostart，此時又落回上述冷啟動競態而僅剩 `harbor-log` 存活、其餘集體陣亡無人拉回。
+  watchdog 定期巡檢，偵測「容器存在卻未全數 running」即以 `run.sh` 依正確順序補起；
+  容器完全不存在（多為人為 `down`）時則不動作，以免違背意願拉起。兩者共用 mkdir
+  原子鎖，避免登入瞬間並發 `compose` 衝突。
 
 ```bash
 cd harbor/boot
-./install.sh             # 安裝並載入 LaunchAgent（com.chen.harbor-autostart）
+./install.sh             # 安裝並載入兩個 LaunchAgent（autostart + watchdog）
 ./uninstall.sh           # 停用並移除（不影響執行中的容器）
 ```
 
 | 檔案 | 說明 |
 | --- | --- |
-| `harbor-autostart.sh` | 開機腳本：輪詢等待 Docker daemon（上限 300s）後執行 `run.sh` |
-| `com.chen.harbor-autostart.plist` | LaunchAgent 範本，`__HARBOR_DIR__` 由 `install.sh` 替換 |
-| `install.sh` / `uninstall.sh` | 安裝（`launchctl bootstrap`）／卸載（`launchctl bootout`） |
+| `harbor-autostart.sh` | 登入觸發：輪詢等待 Docker daemon（上限 300s）後執行 `run.sh` |
+| `harbor-watchdog.sh` | 定期巡檢（120s）：容器未全數 running 即以 `run.sh` 補起 |
+| `com.chen.harbor-autostart.plist` | autostart 範本（`RunAtLoad`），`__HARBOR_DIR__` 由 `install.sh` 替換 |
+| `com.chen.harbor-watchdog.plist` | watchdog 範本（`StartInterval`），同上替換 |
+| `install.sh` / `uninstall.sh` | 一併安裝（`launchctl bootstrap`）／卸載（`launchctl bootout`）兩個 agent |
 
 ```bash
-# 不必重開機，立即手動測試一次
-launchctl kickstart -k gui/$(id -u)/com.chen.harbor-autostart
-tail -f harbor/logs/harbor-autostart.log      # 觀察執行記錄
+# 不必重開機，立即手動測試一次（停一個容器，watchdog 應自動補回）
+launchctl kickstart -k gui/$(id -u)/com.chen.harbor-watchdog
+tail -f harbor/logs/harbor-watchdog.log      # 觀察執行記錄
 ```
 
 > log 寫於 `harbor/logs/`（已於 `.gitignore` 排除）。

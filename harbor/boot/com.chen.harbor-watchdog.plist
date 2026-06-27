@@ -1,0 +1,42 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<!--
+  Harbor 守護巡檢 LaunchAgent 範本。
+
+  補強 com.chen.harbor-autostart（僅登入時 RunAtLoad）的盲區：Docker daemon 若
+  「單獨重啟」不會重新登入、故不觸發 autostart。本 agent 改以 StartInterval 定期
+  巡檢，偵測 Harbor 容器未全數 running 即自動以正確順序補起。
+
+  __HARBOR_DIR__ 為佔位符，由 install.sh 於安裝時以實際 harbor 目錄絕對路徑取代，
+  並輸出至 ~/Library/LaunchAgents/com.chen.harbor-watchdog.plist。
+  請勿直接載入本範本檔。
+-->
+<plist version="1.0">
+<dict>
+  <key>Label</key>
+  <string>com.chen.harbor-watchdog</string>
+
+  <key>ProgramArguments</key>
+  <array>
+    <string>/bin/bash</string>
+    <string>__HARBOR_DIR__/boot/harbor-watchdog.sh</string>
+  </array>
+
+  <!-- 載入時先巡檢一次（與 autostart 互補，靠共用鎖避免衝突）。 -->
+  <key>RunAtLoad</key>
+  <true/>
+
+  <!-- 每 120 秒巡檢一次，涵蓋 Docker daemon 單獨重啟後的自我修復。 -->
+  <key>StartInterval</key>
+  <integer>120</integer>
+
+  <!-- 標記為背景工作，避免佔用互動資源。 -->
+  <key>ProcessType</key>
+  <string>Background</string>
+
+  <key>StandardOutPath</key>
+  <string>__HARBOR_DIR__/logs/harbor-watchdog.launchd.log</string>
+  <key>StandardErrorPath</key>
+  <string>__HARBOR_DIR__/logs/harbor-watchdog.launchd.log</string>
+</dict>
+</plist>

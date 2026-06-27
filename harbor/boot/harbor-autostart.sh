@@ -27,6 +27,9 @@ readonly LOG_FILE="${LOG_DIR}/harbor-autostart.log"
 readonly DOCKER_BIN="/usr/local/bin/docker"
 readonly MAX_WAIT_SECONDS=300
 readonly POLL_INTERVAL=5
+# 與 watchdog（com.chen.harbor-watchdog）共用，確保同一時刻僅一個程序拉起 Harbor。
+readonly LOCK_DIR="${LOG_DIR}/.harbor-boot.lock"
+readonly LOCK_STALE_SECONDS=600
 
 mkdir -p "${LOG_DIR}"
 
@@ -34,6 +37,22 @@ mkdir -p "${LOG_DIR}"
 log() {
   printf '%s [harbor-autostart] %s\n' \
     "$(date '+%Y-%m-%d %H:%M:%S')" "$*" >>"${LOG_FILE}"
+}
+
+# 取得互斥鎖（macOS 無內建 flock，改用 mkdir 原子性）。
+# 成功取鎖回傳 0；鎖被占用且未過期回傳 1；逾時殘留鎖則回收後重取。
+acquire_lock() {
+  if mkdir "${LOCK_DIR}" 2>/dev/null; then
+    return 0
+  fi
+  local lock_age
+  lock_age=$(( $(date +%s) - $(stat -f %m "${LOCK_DIR}" 2>/dev/null || echo 0) ))
+  if (( lock_age > LOCK_STALE_SECONDS )); then
+    log "偵測到過期鎖（鎖齡 ${lock_age}s），回收後重取。"
+    rmdir "${LOCK_DIR}" 2>/dev/null || true
+    mkdir "${LOCK_DIR}" 2>/dev/null && return 0
+  fi
+  return 1
 }
 
 main() {
@@ -49,6 +68,13 @@ main() {
     waited=$(( waited + POLL_INTERVAL ))
   done
   log "Docker daemon 已就緒（等待約 ${waited}s），開始啟動 Harbor..."
+
+  # 取鎖；若 watchdog 已在拉起，略過以免重複 compose。
+  if ! acquire_lock; then
+    log "另一啟動／巡檢程序進行中，略過本次啟動。"
+    exit 0
+  fi
+  trap 'rmdir "${LOCK_DIR}" 2>/dev/null || true' EXIT
 
   if "${HARBOR_DIR}/run.sh" >>"${LOG_FILE}" 2>&1; then
     log "Harbor 已透過 run.sh 完成啟動。"
