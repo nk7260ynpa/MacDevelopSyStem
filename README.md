@@ -23,9 +23,12 @@
 ```text
 MacDevelopSyStem/
 ├── README.md              # 專案說明文件
+├── install-all.sh         # 一鍵安裝三服務的開機自動啟動 LaunchAgent
+├── uninstall-all.sh       # 一鍵卸載（不影響執行中的容器）
 ├── .gitignore             # Git 忽略清單
 ├── gitlab/                # GitLab 部署設定
 │   ├── run.sh             # Docker Compose 啟動入口（up/logs/stop/status）
+│   ├── boot/              # 開機自動啟動 LaunchAgent（autostart）
 │   ├── docker/            # Docker Compose 方案
 │   │   ├── build.sh
 │   │   ├── Dockerfile
@@ -41,6 +44,7 @@ MacDevelopSyStem/
 │       └── 03-service.yaml
 ├── harbor/                # Harbor 部署設定
 │   ├── run.sh             # Docker Compose 啟動入口（up/logs/stop/status）
+│   ├── boot/              # 開機自動啟動 LaunchAgent（autostart + watchdog）
 │   ├── docker/            # Docker Compose 方案
 │   │   ├── build.sh       # 拉 image + 用 prepare 產生各 service 設定
 │   │   ├── Dockerfile
@@ -62,6 +66,7 @@ MacDevelopSyStem/
 │       └── data/          # K8s 專屬持久化資料（僅 .keep 納入版控）
 ├── gitlab-runner/         # GitLab Runner 部署設定（CI/CD 執行器）
 │   ├── run.sh             # 入口：register/up/logs/stop/status
+│   ├── boot/              # 開機自動啟動 LaunchAgent（autostart）
 │   └── docker/            # Docker Compose 方案（docker executor）
 │       ├── build.sh
 │       ├── Dockerfile
@@ -424,6 +429,56 @@ kubectl -n harbor get pods -w
 
 Harbor port 8081 / 30081 已刻意錯開 GitLab 的 8080 / 30080，兩者可同時運行
 （記憶體建議 ≥ 6 GB）。
+
+---
+
+## 開機自動啟動（全部服務一鍵）
+
+讓 Harbor、GitLab、GitLab Runner 於主機重開機（使用者登入）後自動恢復。各服務於 `boot/`
+提供 macOS LaunchAgent，由 `install.sh` 將 plist 範本的路徑佔位符替換為實際絕對路徑後寫入
+`~/Library/LaunchAgents/` 並 `launchctl bootstrap` 載入。
+
+> **前提**：Docker Desktop 須設為「登入時自動啟動」，否則重開機後 Docker daemon 不會啟動，
+> 任何 LaunchAgent 都將空等逾時。請於 Docker Desktop → Settings → General 勾選
+> "Start Docker Desktop when you sign in"。
+
+| 服務 | 機制 | 說明 |
+| --- | --- | --- |
+| Harbor | autostart + watchdog | 多 service 有冷啟動競態，詳見上方「開機自動啟動與守護巡檢」 |
+| GitLab | autostart | 單容器，登入後等 Docker daemon 就緒再以 `run.sh` 拉起 |
+| GitLab Runner | autostart | 單容器，依賴 GitLab；等 daemon 與 GitLab health 就緒再 `run.sh up` |
+
+於專案根一鍵安裝／卸載三者：
+
+```bash
+./install-all.sh          # 依序安裝 Harbor、GitLab、GitLab Runner 的 LaunchAgent
+./uninstall-all.sh        # 反向卸載（不影響執行中的容器）
+```
+
+亦可只裝單一服務（各自獨立）：
+
+```bash
+cd gitlab/boot && ./install.sh             # 僅 GitLab
+cd gitlab-runner/boot && ./install.sh      # 僅 GitLab Runner（需先 ./run.sh register）
+```
+
+GitLab / GitLab Runner 的 `boot/` 檔案：
+
+| 檔案 | 說明 |
+| --- | --- |
+| `gitlab-autostart.sh`、`gitlab-runner-autostart.sh` | 登入觸發：輪詢等待 Docker daemon（上限 300s）；Runner 另等 GitLab health 就緒後執行 `run.sh` |
+| `com.chen.gitlab-autostart.plist`、`com.chen.gitlab-runner-autostart.plist` | autostart 範本（`RunAtLoad`），佔位符由 `install.sh` 替換 |
+| `install.sh` / `uninstall.sh` | 安裝（`launchctl bootstrap`）／卸載（`launchctl bootout`）該 agent |
+
+不必重開機，立即手動測試一次：
+
+```bash
+launchctl kickstart -k gui/$(id -u)/com.chen.gitlab-autostart
+tail -f gitlab/logs/gitlab-autostart.log
+```
+
+> Runner 的 autostart 在尚未 `register`（無 `docker/data/config.toml`）時會記 log 後略過，
+> 不視為錯誤。各 log 寫於對應服務的 `logs/`（已於 `.gitignore` 排除）。
 
 ---
 

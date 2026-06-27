@@ -1,0 +1,34 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<!--
+  GitLab 開機自動啟動 LaunchAgent 範本。
+
+  __GITLAB_DIR__ 為佔位符，由 install.sh 於安裝時以實際 gitlab 目錄絕對路徑取代，
+  並輸出至 ~/Library/LaunchAgents/com.chen.gitlab-autostart.plist。
+  請勿直接載入本範本檔。
+-->
+<plist version="1.0">
+<dict>
+  <key>Label</key>
+  <string>com.chen.gitlab-autostart</string>
+
+  <key>ProgramArguments</key>
+  <array>
+    <string>/bin/bash</string>
+    <string>__GITLAB_DIR__/boot/gitlab-autostart.sh</string>
+  </array>
+
+  <!-- 使用者登入時即觸發一次（Docker Desktop 隨後啟動，腳本內會輪詢等待）。 -->
+  <key>RunAtLoad</key>
+  <true/>
+
+  <!-- 標記為背景工作，避免佔用互動資源。 -->
+  <key>ProcessType</key>
+  <string>Background</string>
+
+  <key>StandardOutPath</key>
+  <string>__GITLAB_DIR__/logs/gitlab-autostart.launchd.log</string>
+  <key>StandardErrorPath</key>
+  <string>__GITLAB_DIR__/logs/gitlab-autostart.launchd.log</string>
+</dict>
+</plist>
