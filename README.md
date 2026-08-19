@@ -167,6 +167,31 @@ cd gitlab/docker
 > Registry（改用 Harbor）／KAS／Prometheus 監控，常駐約 2.5–3 GB。適合輕量備份倉庫用途；
 > 屬開發取向、非生產規格。
 
+#### macOS bind mount 的限制與因應
+
+GitLab 的資料以 bind mount 掛到 `gitlab/docker/data`，而 macOS 上 Docker Desktop
+採 virtiofs 分享目錄，對 unix socket 檔案有兩項限制，會讓非正常關機後的 GitLab
+陷入無限重啟（`docker ps` 顯示 `Restarting`）：
+
+| 限制 | 症狀 |
+| --- | --- |
+| 無法 unlink 既有 socket 檔 | Redis／Gitaly／Workhorse 啟動時刪不掉前次殘留的 socket，回報 `Operation not supported` |
+| 無法對 socket 檔 chmod | PostgreSQL 建立 socket 後設定權限失敗，回報 `could not set permissions ...: Invalid argument` |
+| 不保留 setgid 位元 | `gitlab-ctl reconfigure` 檢查 `git-data/repositories` 需為 `2770` 而中止 |
+
+因應方式（皆已內建，無須手動處理）：
+
+- `run.sh` 於每次啟動前清除 `data/data` 內殘留的 unix socket，並將
+  `git-data/repositories` 補回 `2770`。開機自動啟動同樣經由 `run.sh`，故一併涵蓋。
+- `docker-compose.yaml` 將 PostgreSQL 的 socket 目錄改指向容器內 tmpfs
+  （`/run/postgresql`），避開 chmod 限制；資料庫檔案仍留在 `data/data`，不影響持久化。
+
+若仍遇到啟動失敗，可先確認殘留 socket 是否清乾淨：
+
+```bash
+find gitlab/docker/data/data -type s    # 應無輸出
+```
+
 ### 透過 Kubernetes
 
 前置：本機 K8s 叢集已就緒（`kubectl get nodes` 可成功列出節點）。

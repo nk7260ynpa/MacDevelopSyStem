@@ -44,9 +44,19 @@ services:
         puma['max_threads'] = 4
         sidekiq['max_concurrency'] = 5        # 降低背景任務並發
         postgresql['shared_buffers'] = "128MB"
+        # macOS 的 virtiofs bind mount 不支援對 unix socket 檔案 chmod（回 EINVAL），
+        # PostgreSQL 建立 socket 後設定權限會失敗而無法啟動；
+        # 故將 socket 目錄移出掛載區（容器內本地路徑），DB 資料仍留在 ./data/data。
+        postgresql['unix_socket_directory'] = '/run/postgresql'
+        gitlab_rails['db_host'] = '/run/postgresql'
         postgresql['max_connections'] = 100
         registry['enable'] = false            # 已有獨立 Harbor，關閉內建 registry
         gitlab_kas['enable'] = false          # 關閉 K8s Agent Server
+    # PostgreSQL 的 unix socket 目錄（見上方 GITLAB_OMNIBUS_CONFIG 說明）；
+    # 置於容器內 tmpfs，避開 virtiofs 對 socket 檔 chmod/unlink 的限制。
+    # uid/gid 996 為 image 內建的 gitlab-psql 帳號。
+    tmpfs:
+      - /run/postgresql:uid=996,gid=996,mode=0755
     volumes:
       - ./data/config:/etc/gitlab
       - ./data/logs:/var/log/gitlab
