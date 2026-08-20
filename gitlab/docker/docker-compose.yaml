@@ -64,6 +64,17 @@ services:
         # RDB 檔仍留在 ./data/data 的 redis/ 目錄，不受影響。
         redis['unixsocket'] = '/run/gitlab-redis/redis.socket'
         gitlab_rails['redis_socket'] = '/run/gitlab-redis/redis.socket'
+        # Puma 對 Rails 的 unix socket 直接停用，改讓 Workhorse 走既有的 TCP 埠。
+        # 原因同上：daemon 重啟後殘留在 virtiofs 上的 gitlab.socket 無法被重新
+        # bind，Workhorse 連過去會得到「connect: operation not supported」，
+        # 對外一樣是 502。Puma 本來就同時 bind tcp://127.0.0.1:8080（見 puma.rb），
+        # 停掉 unix bind 不減少任何能力，且完全不依賴掛載區的檔案狀態。
+        # puma['socket'] 給空字串即可：範本以 `!listen_socket.empty?` 決定是否 bind。
+        # auth_backend 必須「明確指定」，omnibus 才會把 workhorse 的 auth_socket
+        # 設為 nil（見 libraries/puma.rb:42 與 libraries/gitlab_workhorse.rb:24）；
+        # 值與內建預設相同，僅指定行為本身有意義。
+        puma['socket'] = ''
+        gitlab_workhorse['auth_backend'] = 'http://localhost:8080'
         registry['enable'] = false            # 已有獨立 Harbor，關閉內建 registry
         gitlab_kas['enable'] = false          # 關閉 K8s Agent Server
     # PostgreSQL 與 Redis 的 unix socket 目錄（見上方 GITLAB_OMNIBUS_CONFIG 說明）；
