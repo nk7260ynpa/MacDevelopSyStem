@@ -36,6 +36,8 @@ jobservice:
     - STD_OUTPUT
     - FILE
   logger_sweeper_duration: 1
+  # v2.15 新增：單一 job 執行時間上限（小時），逾時視為失敗以免卡住 worker。
+  max_job_duration_hours: 24
 
 notification:
   webhook_job_max_retry: 3
@@ -57,4 +59,4 @@ proxy:
     - jobservice
     - trivy
 
-_version: 2.11.0
+_version: 2.15.0
