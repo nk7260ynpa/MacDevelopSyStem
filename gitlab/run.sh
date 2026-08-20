@@ -27,6 +27,14 @@ mkdir -p "${DOCKER_DIR}/data"/{config,logs,data}
 #      因刪不掉舊 socket 而失敗（Operation not supported）。
 #   2. 無法保留 setgid 位元，reconfigure 檢查 repositories 需為 2770 會失敗。
 # 啟動前先行清理與補正，可避免容器陷入無限重啟。
+#
+# 僅在容器「未運行」時才動作。GitLab 各元件之間是靠這些 unix socket 互連
+# （Workhorse→Rails、Rails→Gitaly 等），容器運行中時它們全是活的，而
+# find -type s 只看檔案型別，分不出活的與殘留的。誤刪活 socket 的後果無法
+# 自癒：listener 持有的是已開啟的 inode，刪掉路徑名既不會通知它、也不會讓
+# 它重建，但連線方是以路徑名 connect；加上 docker compose up -d 對設定未變
+# 的運行中容器是 no-op（不會重啟），沒有任何人會把 socket 補回來，於是既有
+# 連線照舊而新連線全數失敗（對外表現為 502）。故偵測到運行中即整段跳過。
 # Globals:
 #   DOCKER_DIR
 # Arguments:
@@ -35,6 +43,17 @@ mkdir -p "${DOCKER_DIR}/data"/{config,logs,data}
 #   清理項目訊息
 #######################################
 clean_stale_state() {
+  # 以 container_name 精確比對，刻意不用 docker compose ps：本目錄的 compose
+  # 專案名被推導為 "docker"，與其他同樣位於 docker/ 目錄的專案
+  # （Tw_stock_server_monitor、LNGclip、FlightPrice…）相同，compose ps 會把
+  # 它們的容器一併列出，導致 GitLab 已停止時仍被誤判為運行中而跳過清理。
+  local running
+  running="$(docker ps --filter 'name=^gitlab$' --filter 'status=running' --quiet 2>/dev/null || true)"
+  if [[ -n "${running}" ]]; then
+    echo "[run.sh] GitLab 容器運行中，跳過 socket 清理（避免刪除使用中的 socket）。"
+    return 0
+  fi
+
   local data_dir="${DOCKER_DIR}/data/data"
   [[ -d "${data_dir}" ]] || return 0
 

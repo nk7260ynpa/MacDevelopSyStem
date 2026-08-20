@@ -189,15 +189,20 @@ GitLab 的資料以 bind mount 掛到 `gitlab/docker/data`，而 macOS 上 Docke
 
 因應方式（皆已內建，無須手動處理）：
 
-- `run.sh` 於每次啟動前清除 `data/data` 內殘留的 unix socket，並將
+- `run.sh` 於啟動前清除 `data/data` 內殘留的 unix socket，並將
   `git-data/repositories` 補回 `2770`。開機自動啟動同樣經由 `run.sh`，故一併涵蓋。
+  此清理**僅在 GitLab 容器未運行時執行**：容器運行中時那些 socket 全是活的
+  （Workhorse→Rails、Rails→Gitaly 等元件靠它們互連），刪掉會使新連線全數失敗，
+  而 `docker compose up -d` 對運行中的容器不會重啟、不會重建 socket，服務將無法自癒。
 - `docker-compose.yaml` 將 PostgreSQL 的 socket 目錄改指向容器內 tmpfs
   （`/run/postgresql`），避開 chmod 限制；資料庫檔案仍留在 `data/data`，不影響持久化。
 
-若仍遇到啟動失敗，可先確認殘留 socket 是否清乾淨：
+若仍遇到啟動失敗，可先確認殘留 socket 是否清乾淨。**須在容器停止的狀態下檢查**——
+服務正常運行時本來就會有數個活的 socket，那是正常現象，不是殘留：
 
 ```bash
-find gitlab/docker/data/data -type s    # 應無輸出
+docker ps --filter 'name=^gitlab$' --quiet   # 應無輸出（確認容器已停止）
+find gitlab/docker/data/data -type s         # 應無輸出
 ```
 
 ### 透過 Kubernetes
