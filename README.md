@@ -20,7 +20,7 @@
 
 各服務的映像版本一律**釘選**，不使用浮動的 `:latest`。GitLab 與 Runner 釘選於各自的
 `docker/Dockerfile`；Harbor 為多映像架構，實際生效的是 `docker/docker-compose.yaml`
-的 9 個 image tag 與 `docker/build.sh` 的 `HARBOR_VERSION`（`harbor/docker/Dockerfile`
+的 8 個 image tag 與 `docker/build.sh` 的 `HARBOR_VERSION`（`harbor/docker/Dockerfile`
 僅為佔位、不參與部署）。升級注意事項見「[版本升級](#版本升級)」。
 
 K8s 方案的 manifest 版本獨立維護，目前仍停在 Harbor `v2.11.0` 與 `gitlab-ce:latest`，
@@ -68,15 +68,14 @@ MacDevelopSyStem/
 │       ├── 05-init-configmaps-job.yaml
 │       ├── 10~17-*.yaml   # 8 個 service（log/redis/db/registry/core/...）
 │       └── data/          # K8s 專屬持久化資料（僅 .keep 納入版控）
-├── gitlab-runner/         # GitLab Runner 部署設定（CI/CD 執行器）
-│   ├── run.sh             # 入口：register/up/logs/stop/status
-│   └── docker/            # Docker Compose 方案（docker executor）
-│       ├── build.sh
-│       ├── Dockerfile
-│       ├── docker-compose.yaml
-│       ├── .env.example   # CI_SERVER_URL / RUNNER_TOKEN 等
-│       └── data/          # Runner 設定 config.toml（僅 .keep 納入版控）
-└── logs/                  # 各工具運行日誌（執行時建立）
+└── gitlab-runner/         # GitLab Runner 部署設定（CI/CD 執行器）
+    ├── run.sh             # 入口：register/up/logs/stop/status
+    └── docker/            # Docker Compose 方案（docker executor）
+        ├── build.sh
+        ├── Dockerfile
+        ├── docker-compose.yaml
+        ├── .env.example   # CI_SERVER_URL / RUNNER_TOKEN 等
+        └── data/          # Runner 設定 config.toml（僅 .keep 納入版控）
 ```
 
 ### 資料持久化設計
@@ -451,7 +450,7 @@ docker inspect -f '{{.Name}} {{.HostConfig.RestartPolicy.Name}}' \
   gitlab gitlab-runner harbor-core
 ```
 
-### 為什麼容器之間不能有啟動依賴
+### 為什麼跨容器啟動依賴必須能靠 restart 自愈
 
 這是本專案 compose 設定的一項關鍵約束，理解它才能避免日後改壞。
 
@@ -461,15 +460,40 @@ daemon 是**逐容器依各自 restart policy 恢復，不走 compose、也不�
 
 早期版本的 Harbor 讓 8 個 service 都以 `syslog` driver 將 log 送往 `harbor-log` 的 `1514` 埠，
 並用 `depends_on` 對 `log` 把關。結果在 daemon 恢復容器時，眾 service 搶在 `harbor-log`
-就緒前啟動、連不上 `1514` 而以 `ExitCode 128` 退出，重試耗盡後被 docker 放棄，
-最終只剩 `harbor-log` 存活——當時必須另外掛一支守護巡檢的 LaunchAgent 才能補救。
+就緒前啟動、連不上 `1514`，最終只剩 `harbor-log` 存活——當時必須另外掛一支守護巡檢的
+LaunchAgent 才能補救。
 
-現在改用 `json-file` driver 後，各容器不再依賴彼此就緒，`restart: always` 即可獨立自愈，
-那套自製機制也隨之移除。**因此新增或修改 service 時，不要引入「容器必須等另一個容器就緒
-才能啟動」的設計**（logging driver、啟動時的網路探測等），否則會重蹈覆轍。
+關鍵在於**這種失敗 restart policy 救不了**：logging driver 連不上屬於「容器 start 失敗」，
+容器根本沒進入運行狀態，restart manager 不接手，`restart: always` 形同虛設。
+
+改用 `json-file` driver 後，log 不再跨容器，這類失敗就消失了。
+
+**新增或修改 service 時，跨容器依賴本身不是問題，「無法靠 restart 自愈的跨容器依賴」才是。**
+兩者的差別：
+
+- ✅ 可自愈：`proxy` 的 nginx 設定含 `upstream core { server core:8080; }`，`core` 未運行時
+  nginx 會因 DNS 解析失敗而退出——但這是容器**運行後退出**，`restart: always` 會不斷重試，
+  等 `core` 起來後自然恢復。
+- ❌ 不可自愈：logging driver 連不上收集端，容器**連 start 都失敗**，restart policy 不介入。
 
 `depends_on` 用於表達啟動順序偏好仍然沒問題——它在 `run.sh` 走 compose 的路徑上有效，
 只是不能被當成正確性的保證。
+
+### GitLab 的已知限制：重開機後可能需手動救援
+
+GitLab 的 `gitlab/run.sh` 在啟動前會執行 `clean_stale_state()`，清除前次殘留的 unix socket
+並修正 `git-data/repositories` 的 setgid 權限——這是 macOS virtiofs 環境的必要處理，
+容器內無法自行 unlink 這些 socket。
+
+但**主機重開機時 daemon 是直接 start 既有容器，不會走 `run.sh`**，所以這道清理不會執行。
+多數情況下 GitLab 能正常恢復，若不幸落入重啟迴圈（`docker ps` 顯示 gitlab 反覆 Restarting），
+手動走一次完整流程即可：
+
+```bash
+cd gitlab && ./run.sh stop && ./run.sh
+```
+
+Harbor 與 Runner 無此限制。
 
 ### 查看 log
 
