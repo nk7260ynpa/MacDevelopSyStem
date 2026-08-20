@@ -1,5 +1,9 @@
 # 更新 GitLab 與 Harbor 版本
 
+> **注意**：本文中與 `launchctl unload/load com.chen.harbor-watchdog.plist` 相關的
+> 前後置步驟已失效——整套 LaunchAgent 機制已於 `refactor/native-docker-restart` 廢止，
+> 改用 Docker 內建的 `restart: always`。升級前後改用 `./run.sh stop` 與 `./run.sh`。
+
 Notion 任務：[更新gitlab 與 Harbor版本](https://app.notion.com/p/3c0dfac20953801c968bf8a08204a6f8)
 （Group：MacDevelopSyStem，狀態：In progress）
 

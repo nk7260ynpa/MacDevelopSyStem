@@ -150,9 +150,14 @@ cd ~/AI/MacDevelopSyStem/gitlab-runner && ./run.sh up
 5. **log 可讀**：`docker logs harbor-core --tail 20` 有輸出（確認 json-file 生效）。
 
 6. **崩潰自愈**（對應需求 2）：
+
+   > **執行後修正**：原訂用 `docker kill` 模擬，實測無效——Docker 會將 `kill`／`stop`
+   > 記為「使用者主動停止」，restart policy 當下不生效。改為讓容器內主行程自行退出。
+
    ```bash
-   docker kill harbor-core     # 模擬意外掛掉
-   sleep 15 && docker ps | grep harbor-core   # 應已自動重啟
+   docker exec harbor-core kill -TERM 1     # 模擬主行程意外退出
+   sleep 15
+   docker inspect -f '{{.State.Status}} {{.RestartCount}}' harbor-core   # RestartCount 應遞增
    ```
 
 7. **開機恢復**（對應需求 1，本次改動的核心目的）：重啟 Docker Desktop，
