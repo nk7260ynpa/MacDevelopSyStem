@@ -479,21 +479,36 @@ LaunchAgent 才能補救。
 `depends_on` 用於表達啟動順序偏好仍然沒問題——它在 `run.sh` 走 compose 的路徑上有效，
 只是不能被當成正確性的保證。
 
-### GitLab 的已知限制：重開機後可能需手動救援
+### GitLab 的已知限制：daemon 重啟後需手動救援
 
 GitLab 的 `gitlab/run.sh` 在啟動前會執行 `clean_stale_state()`，清除前次殘留的 unix socket
 並修正 `git-data/repositories` 的 setgid 權限——這是 macOS virtiofs 環境的必要處理，
 容器內無法自行 unlink 這些 socket。
 
-但**主機重開機時 daemon 是直接 start 既有容器，不會走 `run.sh`**，所以這道清理不會執行。
-多數情況下 GitLab 能正常恢復，若不幸落入重啟迴圈（`docker ps` 顯示 gitlab 反覆 Restarting），
-手動走一次完整流程即可：
+但**主機重開機或 Docker daemon 重啟時，daemon 是直接 start 既有容器，不會走 `run.sh`**，
+這道清理因此不會執行。2026-08-21 實測確認：重啟 Docker Desktop 後 GitLab **必定**需要手動救援。
+
+徵兆要特別留意，因為**容器本身看起來完全正常**：
+
+| 觀察點 | 表現 |
+| --- | --- |
+| `docker ps` | `Up ... (healthy)`，不會顯示 Restarting |
+| `curl http://localhost:8080/users/sign_in` | 持續回 **502**，等再久也不會好 |
+| `docker exec gitlab gitlab-ctl status` | `down: redis: 0s, normally up, want up`，且 puma／sidekiq 的存活秒數反覆歸零 |
+| `docker exec gitlab tail /var/log/gitlab/redis/current` | `Failed opening Unix socket: bind: Operation not supported` |
+
+根因是 `/var/opt/gitlab/redis/redis.socket` 殘留在 virtiofs 上，redis 無法覆寫而啟動失敗，
+連帶使依賴它的 puma 與 sidekiq 反覆崩潰，最外層的 nginx 只能回 502。
+容器的 healthcheck 驗不出這件事，`restart: always` 也救不了——
+**容器從頭到尾都是活的，掛掉的是它裡面的行程**。
+
+救援方式是走一次完整流程，讓 `clean_stale_state()` 有機會執行：
 
 ```bash
 cd gitlab && ./run.sh stop && ./run.sh
 ```
 
-Harbor 與 Runner 無此限制。
+約一分鐘後 `gitlab-ctl status` 應顯示 9 個服務全為 `run`。Harbor 與 Runner 無此限制。
 
 ### 查看 log
 
@@ -508,13 +523,25 @@ cd harbor && ./run.sh logs            # 該服務全部容器
 
 ### 手動停用服務
 
-`restart: always` 意味著手動 `docker stop` 後，重開機時容器仍會被拉起。
-要長期停用某個服務，請用 `run.sh stop`（等同 `docker compose down`），
-容器被移除後就不受 restart policy 影響：
+`docker stop` 與 `docker kill` 都會被 daemon 記為「使用者主動停止」，
+所以容器**當下不會**被 restart policy 拉回；但 `always` 在 daemon 重啟時會忽略這個標記，
+把容器一併恢復——這正是 `always` 與 `unless-stopped` 的唯一差別，也是本專案選 `always` 的理由：
+只要曾經手動停過一次，`unless-stopped` 的容器就再也不會在重開機時自己回來。
+
+因此要長期停用某個服務，請用 `run.sh stop`（等同 `docker compose down`），
+容器被移除後就完全不受 restart policy 影響：
 
 ```bash
 cd harbor && ./run.sh stop
 ```
+
+> 同理，`docker kill` 無法用來測試崩潰自愈——它會被視為手動停止。
+> 要模擬真正的意外退出，請讓容器內的主行程自行結束：
+>
+> ```bash
+> docker exec harbor-core kill -TERM 1
+> docker inspect -f '{{.State.Status}} {{.RestartCount}}' harbor-core   # RestartCount 應遞增
+> ```
 
 ---
 
