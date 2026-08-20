@@ -1,4 +1,4 @@
-# Harbor v2.11.0 本機開發部署。
+# Harbor v2.15.2 本機開發部署。
 #
 # 服務組成：log / registry / registryctl / postgresql / redis / core /
 #           portal / jobservice / proxy
@@ -20,7 +20,7 @@ name: harbor
 
 services:
   log:
-    image: goharbor/harbor-log:v2.11.0
+    image: goharbor/harbor-log:v2.15.2
     container_name: harbor-log
     restart: always
     cap_drop:
@@ -44,7 +44,7 @@ services:
       - harbor
 
   registry:
-    image: goharbor/registry-photon:v2.11.0
+    image: goharbor/registry-photon:v2.15.2
     container_name: registry
     restart: always
     cap_drop:
@@ -74,7 +74,7 @@ services:
         tag: "registry"
 
   registryctl:
-    image: goharbor/harbor-registryctl:v2.11.0
+    image: goharbor/harbor-registryctl:v2.15.2
     container_name: registryctl
     env_file:
       - ./data/config/registryctl/env
@@ -107,8 +107,16 @@ services:
         syslog-address: "tcp://127.0.0.1:1514"
         tag: "registryctl"
 
+  # 內建 PostgreSQL。v2.15.2 映像的 entrypoint 為
+  # ["/docker-entrypoint.sh", "15", "18"]，兩個參數即舊／新的 PG 大版本；
+  # 首次以本版啟動時若偵測到既有的 pg15 資料目錄，會自動跑 pg_upgrade 升到 pg18。
+  # 注意：升級成功後 entrypoint 會「直接刪除」舊的 data/database/pg15，
+  # 容器內不留回退點，故升級前務必先自行備份整個 ./data 目錄。
+  # 另外 pg_upgrade 是沿用舊叢集的索引檔，其排序來自升級前的 glibc collation，
+  # 可能造成列表載入不完、robot 帳號權限異常等症狀，升級後應重建索引：
+  #   docker exec harbor-db reindexdb --all --username postgres
   postgresql:
-    image: goharbor/harbor-db:v2.11.0
+    image: goharbor/harbor-db:v2.15.2
     container_name: harbor-db
     restart: always
     cap_drop:
@@ -133,8 +141,13 @@ services:
         syslog-address: "tcp://127.0.0.1:1514"
         tag: "postgresql"
 
+  # 快取與 jobservice 任務佇列。Harbor v2.15.2 起後端由 Redis 換成 Valkey，
+  # 映像名亦隨之從 goharbor/redis-photon 改為 goharbor/valkey-photon
+  # （v2.15.1 為最後一版 redis-photon）。官方 compose 樣板仍沿用 redis 作為
+  # service 名、container_name 與資料路徑（/var/lib/redis），此處比照辦理，
+  # 各 service 設定中的連線位址（redis:6379）因而不需更動。
   redis:
-    image: goharbor/redis-photon:v2.11.0
+    image: goharbor/valkey-photon:v2.15.2
     container_name: redis
     restart: always
     cap_drop:
@@ -157,7 +170,7 @@ services:
         tag: "redis"
 
   core:
-    image: goharbor/harbor-core:v2.11.0
+    image: goharbor/harbor-core:v2.15.2
     container_name: harbor-core
     env_file:
       - ./data/config/core/env
@@ -204,7 +217,7 @@ services:
         tag: "core"
 
   portal:
-    image: goharbor/harbor-portal:v2.11.0
+    image: goharbor/harbor-portal:v2.15.2
     container_name: harbor-portal
     restart: always
     cap_drop:
@@ -230,7 +243,7 @@ services:
         tag: "portal"
 
   jobservice:
-    image: goharbor/harbor-jobservice:v2.11.0
+    image: goharbor/harbor-jobservice:v2.15.2
     container_name: harbor-jobservice
     env_file:
       - ./data/config/jobservice/env
@@ -263,7 +276,7 @@ services:
         tag: "jobservice"
 
   proxy:
-    image: goharbor/nginx-photon:v2.11.0
+    image: goharbor/nginx-photon:v2.15.2
     container_name: nginx
     restart: always
     cap_drop:

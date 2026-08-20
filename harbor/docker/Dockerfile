@@ -6,7 +6,7 @@
 #
 # 此檔案保留作為符合專案既定 docker/ 結構，以及日後若需客製化單一 service 之
 # 進入點（例如改 harbor-core）。
-FROM goharbor/harbor-core:v2.11.0
+FROM goharbor/harbor-core:v2.15.2
 
 LABEL maintainer="MacDevelopSyStem"
 LABEL purpose="本機 macOS 開發環境之 Harbor Registry（佔位 Dockerfile，實際以多 service compose 啟動）"

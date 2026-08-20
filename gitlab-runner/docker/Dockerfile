@@ -1,4 +1,10 @@
-FROM gitlab/gitlab-runner:latest
+# 版本釘選（勿改回 :latest）：
+#   Runner 版本不得高於 GitLab 主體版本，故跟隨主體所在的次版本分支——
+#   主體為 19.2.4 時取 19.2 分支的最新版。不採用官方 :latest，因其跟隨
+#   Runner 自己的發佈節奏，隨時可能高於主體版本。
+#   升級 GitLab 主體時應一併檢視此處。
+#   config.toml 未釘選 helper_image，helper 會自動跟隨 Runner 版本。
+FROM gitlab/gitlab-runner:v19.2.2
 
 LABEL maintainer="MacDevelopSyStem"
 LABEL purpose="本機 macOS 開發環境之 GitLab Runner（docker executor）"

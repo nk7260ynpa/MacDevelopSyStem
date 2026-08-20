@@ -32,6 +32,11 @@ trivy:
 
 jobservice:
   max_job_workers: 10
+  # v2.15 新增：單一 job 的執行時數上限，渲染為 jobservice 的
+  # reaper.max_update_hours。逾時者由 reaper 標記為 error 以免長期佔著
+  # 「執行中」狀態，但工作本身仍會繼續跑，並不會被中止。
+  # 鍵的順序比照官方 v2.15.0 模板，方便日後與模板逐行比對。
+  max_job_duration_hours: 24
   job_loggers:
     - STD_OUTPUT
     - FILE
@@ -57,4 +62,4 @@ proxy:
     - jobservice
     - trivy
 
-_version: 2.11.0
+_version: 2.15.0
