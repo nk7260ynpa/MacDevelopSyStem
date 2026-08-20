@@ -71,7 +71,8 @@ Harbor v2.15.2 帶有兩項破壞性變更，必須在升級流程中特別處�
 
 `FROM gitlab/gitlab-runner:latest` → `FROM gitlab/gitlab-runner:v19.2.2`。
 註記：Runner 版本不得高於 GitLab 主體，故取 19.2 分支最新的 v19.2.2
-（`latest` 目前指向 v19.3.0，高於主體 19.2.4，不採用）。
+（`latest` 於 2026-08-20 當下觀測指向 v19.3.0，高於主體 19.2.4，不採用；
+Dockerfile 內的註解已改為描述規則而非當下版本號，以免隨時間過期）。
 `config.toml` 未釘選 `helper_image`，helper 會自動跟隨 Runner 版本，無需改設定。
 
 ### 文件
@@ -139,7 +140,7 @@ launchctl load ~/Library/LaunchAgents/com.chen.harbor-watchdog.plist
 | --- | --- | --- |
 | Harbor 容器 | `docker compose -f harbor/docker/docker-compose.yaml ps` | 9 個 service 全 `healthy` |
 | PG 已升到 18 | `docker exec harbor-db postgres --version` | `PostgreSQL 18.x` |
-| PG 舊資料保留 | `docker exec harbor-db ls /var/lib/postgresql/data` | 同時有 `pg15`、`pg18` |
+| PG 舊資料保留 | `docker exec harbor-db ls /var/lib/postgresql/data` | ~~同時有 `pg15`、`pg18`~~ **此預期有誤，實際只剩 `pg18`，見文末〈實作後修訂〉** |
 | Harbor UI | `curl -sI http://localhost:8081` | `200`，登入 admin 可見既有 project |
 | Harbor registry | `docker login localhost:8081` → `push`/`pull` 一個小 image | 成功 |
 | GitLab 版本 | `docker exec gitlab cat /opt/gitlab/embedded/service/gitlab-rails/VERSION` | `19.2.4` |
@@ -154,8 +155,8 @@ launchctl load ~/Library/LaunchAgents/com.chen.harbor-watchdog.plist
 
 | 風險 | 應對 |
 | --- | --- |
-| **pg_upgrade 失敗** | 舊 `pg15` 目錄不會被刪除，容器內仍在。停服務、還原 `~/AI/_backups/harbor-data-*`、把 image 改回 v2.15.1（仍用 PG 15 且仍是 redis-photon），即可回到可用狀態。 |
-| **升級後 UI 列表空白／robot 權限異常** | v2.15.2 release note 明列此症狀源自 PG 大版本間 collation 變更導致 B-Tree 索引失效。應對：`docker exec harbor-db reindexdb --all-databases -U postgres`。升級腳本只刷新 collation 中繼資料、不重建索引。 |
+| **pg_upgrade 失敗** | ~~舊 `pg15` 目錄不會被刪除，容器內仍在。~~**此前提有誤：升級成功後 entrypoint 會直接刪除 `pg15`，容器內沒有回退點，只能還原備份，見文末〈實作後修訂〉。** 停服務、還原 `~/AI/_backups/harbor-data-*`、把 image 改回 v2.15.1（仍用 PG 15 且仍是 redis-photon），即可回到可用狀態。 |
+| **升級後 UI 列表空白／robot 權限異常** | v2.15.2 release note 明列此症狀源自 PG 大版本間 collation 變更導致 B-Tree 索引失效。應對：`docker exec harbor-db reindexdb --all --username postgres`。升級腳本只刷新 collation 中繼資料、不重建索引。 |
 | **`harbor-log` 健康檢查失效導致 compose 卡住** | 我們的 compose 對 log 用 `condition: service_healthy`，而該 healthcheck 依賴 `netstat`。v2.15.2 的 log base 改用 `goharbor/photon:5.0-legacy`（未顯式安裝 net-tools）。啟動後立即檢查 `docker inspect harbor-log --format '{{.State.Health.Status}}'`；若持續 `unhealthy`，改為 `condition: service_started` 並保留現有的 log 先行啟動順序。 |
 | **GitLab 資料庫遷移耗時** | 19.0→19.2 的 reconfigure 加 migration 可能耗時 10 分鐘以上，屬正常。以 `docker logs -f gitlab` 觀察，不要中途 kill。 |
 | **v2.14.0 破壞性變更：replication adapter 白名單** | 本機未設定任何 replication 端點，不受影響。 |
@@ -194,6 +195,9 @@ launchctl load ~/Library/LaunchAgents/com.chen.harbor-watchdog.plist
 原本的 `docker compose pull` 會去 registry 拉本地自建的 `macdev/gitlab`，必然失敗並
 中止腳本，導致 `docker compose build` 從未執行——首次執行升級時即因此仍在用舊 image。
 已改為 `docker compose build --pull`，與 `gitlab-runner/docker/build.sh` 一致。
+
+實際提交為 6 筆，較原規劃的 4 筆多出兩筆文件修正——皆源自 verify-agent 兩輪審查的
+回饋（版本敘述與註解精確度、以及本節所在文件自身的補正）。
 
 驗證結果：Harbor 9 個 service 全 healthy、PG 18.3、既有 2 專案 5 artifacts 完整、
 push/pull 端到端通過；GitLab 19.2.4 healthy、22 個專案與 5 位使用者完整、Gitaly 讀取
