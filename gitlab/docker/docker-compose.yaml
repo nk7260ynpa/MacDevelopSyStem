@@ -15,7 +15,7 @@ services:
     image: macdev/gitlab:latest
     container_name: gitlab
     hostname: gitlab.local
-    restart: unless-stopped
+    restart: always
     shm_size: '256m'
     # 容器記憶體上限 4G（搭配上方 GITLAB_OMNIBUS_CONFIG 瘦身，常駐約 2.5-3G）。
     # 非 swarm 的 docker compose up 下，deploy.resources.limits.memory 有效（套為 cgroup limit）；
