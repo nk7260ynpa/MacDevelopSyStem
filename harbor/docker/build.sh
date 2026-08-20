@@ -25,7 +25,9 @@ cd "${SCRIPT_DIR}"
 
 echo "[build.sh] 建立持久化目錄..."
 mkdir -p "${DATA_DIR}/config"
-mkdir -p "${DATA_DIR}/database" "${DATA_DIR}/registry" "${DATA_DIR}/redis" "${DATA_DIR}/log" "${DATA_DIR}/job_logs"
+# 不建立 log/：harbor-log 收集容器已移除，各 service 改用 Docker 的 json-file driver，
+# 該目錄不再有任何寫入者（既有的歷史 log 檔保留，可自行清理）。
+mkdir -p "${DATA_DIR}/database" "${DATA_DIR}/registry" "${DATA_DIR}/redis" "${DATA_DIR}/job_logs"
 mkdir -p "${DATA_DIR}/ca_download" "${DATA_DIR}/psc" "${DATA_DIR}/secret"
 
 echo "[build.sh] 拉取 Harbor ${HARBOR_VERSION} 各 service image..."
