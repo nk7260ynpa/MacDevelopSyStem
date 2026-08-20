@@ -11,12 +11,15 @@
 
 ## 預定支援的工具
 
-| 工具 | 用途 | 狀態 |
-| --- | --- | --- |
-| GitLab | 自架 Git 程式碼托管與 CI/CD | 已支援（Docker Compose、K8s） |
-| Harbor | 私有 Container Registry | 已支援（Docker Compose、K8s） |
-| GitLab Runner | GitLab CI/CD 任務執行器（docker executor） | 已支援（Docker Compose） |
-| （後續擴充） | 視需求新增，例如 Jenkins、Nexus、MinIO 等 | — |
+| 工具 | 用途 | 版本（Docker Compose 方案） | 狀態 |
+| --- | --- | --- | --- |
+| GitLab | 自架 Git 程式碼托管與 CI/CD | `19.2.4-ce.0` | 已支援（Docker Compose、K8s） |
+| Harbor | 私有 Container Registry | `v2.15.2` | 已支援（Docker Compose、K8s） |
+| GitLab Runner | GitLab CI/CD 任務執行器（docker executor） | `v19.2.2` | 已支援（Docker Compose） |
+| （後續擴充） | 視需求新增，例如 Jenkins、Nexus、MinIO 等 | — | — |
+
+各服務的映像版本一律**釘選**於各自的 `docker/Dockerfile`，不使用浮動的 `:latest`；
+升級注意事項見「[版本升級](#版本升級)」。K8s 方案的 manifest 版本獨立維護，與上表未必同步。
 
 ## 專案架構
 
@@ -320,9 +323,9 @@ cd ..
 
 ## Harbor 部署
 
-Harbor 為私有 Container Registry，包含 8 個 service（log / registry / registryctl /
+Harbor 為私有 Container Registry，包含 9 個 service（log / registry / registryctl /
 postgresql / redis / core / portal / jobservice / proxy），與 GitLab 一樣提供
-Docker Compose 與 K8s 兩種方案。版本固定 `v2.11.0`。
+Docker Compose 與 K8s 兩種方案。Docker Compose 方案版本固定 `v2.15.2`。
 
 ### 透過 Docker Compose
 
@@ -330,7 +333,7 @@ Docker Compose 與 K8s 兩種方案。版本固定 `v2.11.0`。
 
 ```bash
 cd harbor/docker
-./build.sh               # 拉 v2.11.0 image，並用 prepare 產生 ./data/config/
+./build.sh               # 拉 v2.15.2 image，並用 prepare 產生 ./data/config/
 ```
 
 啟動：
@@ -523,6 +526,58 @@ cd harbor
 # 啟動 GitLab Runner（首次須先 ./docker/build.sh，並 ./run.sh register 註冊）
 cd gitlab-runner
 ./run.sh up
+```
+
+## 版本升級
+
+各服務的映像版本釘選在各自的 `docker/Dockerfile`（Harbor 另有 `docker-compose.yaml`
+與 `build.sh` 中的 `HARBOR_VERSION`）。升級一律「改檔 → `./docker/build.sh` →
+`./run.sh`」，並在升級前備份對應的 `docker/data/` 目錄到 repo 之外。
+
+### GitLab
+
+GitLab 有**必經升級停點**：跨越停點的一次性升級會導致資料庫遷移失敗。停點清單以官方
+repo 的 `config/upgrade_path.yml` 為準（19.x 為 19.2、19.5、19.8、19.11），升級前務必查閱，
+必要時分段升級。這也是不使用 `:latest` 的原因——浮動 tag 可能在某次重拉時一口氣跨過停點。
+
+升級前確認背景遷移已全數完成，否則新版遷移會與未完成的舊遷移衝突：
+
+```bash
+docker exec gitlab gitlab-rails runner \
+  'puts Gitlab::Database::BackgroundMigration::BatchedMigration.where.not(status: 3).count'
+```
+
+升級後同樣以上述指令確認收斂為 `0`（大版本升級後背景遷移可能持續數十分鐘）。
+
+### GitLab Runner
+
+Runner 版本**不得高於** GitLab 主體版本，故跟隨主體的次版本分支（如主體 19.2.x 則取
+`v19.2.2`）。`config.toml` 未釘選 `helper_image`，helper 會自動跟隨 Runner 版本，無需另外設定。
+
+### Harbor
+
+Harbor 只支援**逐次的次版本升級路徑**，且部分版本帶有破壞性變更，升級前先讀該版的
+release note。自 v2.11.0 升至 v2.15.2 時遇到的兩項，記於此供日後參考：
+
+- **快取後端 Redis → Valkey**（v2.15.2）：映像名由 `goharbor/redis-photon` 改為
+  `goharbor/valkey-photon`（v2.15.1 為最後一版 redis-photon）。service 名、container_name
+  與資料路徑沿用官方樣板不變，故各服務的連線位址（`redis:6379`）不需調整。
+- **內建 PostgreSQL 15 → 18**（v2.15.2）：`goharbor/harbor-db` 的 entrypoint 為
+  `["15", "18"]`，容器啟動時偵測到既有 pg15 資料目錄即自動執行 `pg_upgrade`。
+  **升級成功後 entrypoint 會直接刪除舊的 `data/database/pg15`**，容器內不留回退點，
+  故升級前務必自行備份整個 `harbor/docker/data`。
+  另外 `pg_upgrade` 沿用舊叢集的索引檔，其排序來自升級前的 glibc collation，可能造成
+  列表載入不完、robot 帳號權限異常，升級後應重建索引：
+
+  ```bash
+  docker exec harbor-db reindexdb --all --username postgres
+  ```
+
+升級期間先卸載 watchdog，避免它在流程中途把服務拉起來：
+
+```bash
+launchctl unload ~/Library/LaunchAgents/com.chen.harbor-watchdog.plist   # 升級前
+launchctl load ~/Library/LaunchAgents/com.chen.harbor-watchdog.plist     # 升級後
 ```
 
 ## 授權
