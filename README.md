@@ -18,8 +18,13 @@
 | GitLab Runner | GitLab CI/CD 任務執行器（docker executor） | `v19.2.2` | 已支援（Docker Compose） |
 | （後續擴充） | 視需求新增，例如 Jenkins、Nexus、MinIO 等 | — | — |
 
-各服務的映像版本一律**釘選**於各自的 `docker/Dockerfile`，不使用浮動的 `:latest`；
-升級注意事項見「[版本升級](#版本升級)」。K8s 方案的 manifest 版本獨立維護，與上表未必同步。
+各服務的映像版本一律**釘選**，不使用浮動的 `:latest`。GitLab 與 Runner 釘選於各自的
+`docker/Dockerfile`；Harbor 為多映像架構，實際生效的是 `docker/docker-compose.yaml`
+的 9 個 image tag 與 `docker/build.sh` 的 `HARBOR_VERSION`（`harbor/docker/Dockerfile`
+僅為佔位、不參與部署）。升級注意事項見「[版本升級](#版本升級)」。
+
+K8s 方案的 manifest 版本獨立維護，目前仍停在 Harbor `v2.11.0` 與 `gitlab-ce:latest`，
+與上表不同步。
 
 ## 專案架構
 
@@ -149,7 +154,7 @@ cd gitlab
 
 ```bash
 cd gitlab/docker
-./build.sh               # 等同 docker compose pull && docker compose build
+./build.sh               # 等同 docker compose build --pull
 ```
 
 存取資訊：
@@ -556,14 +561,17 @@ Runner 版本**不得高於** GitLab 主體版本，故跟隨主體的次版本�
 
 ### Harbor
 
-Harbor 只支援**逐次的次版本升級路徑**，且部分版本帶有破壞性變更，升級前先讀該版的
-release note。自 v2.11.0 升至 v2.15.2 時遇到的兩項，記於此供日後參考：
+Harbor 的資料庫遷移由 core 於啟動時鏈式執行，故可一次跨越數個次版本（本次即自
+v2.11.0 直上 v2.15.2，未逐版停留）。但**跨過的每一版都可能帶有破壞性變更**，
+升級前必須把區間內所有版本的 release note 讀過一遍，逐項確認。
+自 v2.11.0 升至 v2.15.2 時遇到的兩項，記於此供日後參考：
 
 - **快取後端 Redis → Valkey**（v2.15.2）：映像名由 `goharbor/redis-photon` 改為
   `goharbor/valkey-photon`（v2.15.1 為最後一版 redis-photon）。service 名、container_name
   與資料路徑沿用官方樣板不變，故各服務的連線位址（`redis:6379`）不需調整。
 - **內建 PostgreSQL 15 → 18**（v2.15.2）：`goharbor/harbor-db` 的 entrypoint 為
-  `["15", "18"]`，容器啟動時偵測到既有 pg15 資料目錄即自動執行 `pg_upgrade`。
+  `["/docker-entrypoint.sh", "15", "18"]`（兩個參數即舊／新的 PG 大版本），容器啟動時
+  偵測到既有 pg15 資料目錄即自動執行 `pg_upgrade`。
   **升級成功後 entrypoint 會直接刪除舊的 `data/database/pg15`**，容器內不留回退點，
   故升級前務必自行備份整個 `harbor/docker/data`。
   另外 `pg_upgrade` 沿用舊叢集的索引檔，其排序來自升級前的 glibc collation，可能造成

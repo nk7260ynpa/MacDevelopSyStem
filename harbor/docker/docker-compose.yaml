@@ -107,8 +107,9 @@ services:
         syslog-address: "tcp://127.0.0.1:1514"
         tag: "registryctl"
 
-  # 內建 PostgreSQL。v2.15.2 的映像 entrypoint 為 ["15", "18"]，代表首次以本版
-  # 啟動時，若偵測到既有的 pg15 資料目錄，會自動跑 pg_upgrade 升到 pg18。
+  # 內建 PostgreSQL。v2.15.2 映像的 entrypoint 為
+  # ["/docker-entrypoint.sh", "15", "18"]，兩個參數即舊／新的 PG 大版本；
+  # 首次以本版啟動時若偵測到既有的 pg15 資料目錄，會自動跑 pg_upgrade 升到 pg18。
   # 注意：升級成功後 entrypoint 會「直接刪除」舊的 data/database/pg15，
   # 容器內不留回退點，故升級前務必先自行備份整個 ./data 目錄。
   # 另外 pg_upgrade 是沿用舊叢集的索引檔，其排序來自升級前的 glibc collation，
