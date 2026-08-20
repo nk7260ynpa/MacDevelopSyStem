@@ -80,7 +80,7 @@ services:
     # PostgreSQL 與 Redis 的 unix socket 目錄（見上方 GITLAB_OMNIBUS_CONFIG 說明）；
     # 置於容器內 tmpfs，避開 virtiofs 對 socket 檔 chmod/unlink/bind 的限制。
     # uid/gid 996、997 分別為 image 內建的 gitlab-psql 與 gitlab-redis 帳號；
-    # mode 0755 讓以 git／gitlab-www 執行的 Rails、Sidekiq、Workhorse 得以進入目錄連線
+    # mode 0755 讓以 git 執行的 Rails、Sidekiq、Workhorse 得以進入目錄連線
     # （socket 本身由 omnibus 以 unixsocketperm 777 建立）。
     tmpfs:
       - /run/postgresql:uid=996,gid=996,mode=0755

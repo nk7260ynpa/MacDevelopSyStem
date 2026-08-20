@@ -98,7 +98,8 @@ uninstall-all.sh
 （`harbor-autostart.log`、`harbor-watchdog.log` 及兩個 `.launchd.log`；
 `.gitignore` 已排除 `*.log`，不在版控內，僅清實體檔案）。
 
-`plans/` 下兩份既有文件是歷史記錄，**不動**。
+`plans/` 下兩份既有文件是歷史記錄，內容**不改寫**；實際執行時僅在其中
+已失效的可執行步驟旁加註「此機制已移除」，避免日後被當成有效指令照抄。
 
 ### 5. `README.md` 改寫
 

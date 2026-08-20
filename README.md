@@ -32,6 +32,7 @@ K8s 方案的 manifest 版本獨立維護，目前仍停在 Harbor `v2.11.0` 與
 MacDevelopSyStem/
 ├── README.md              # 專案說明文件
 ├── .gitignore             # Git 忽略清單
+├── plans/                 # 各次改動的實作計畫紀錄（歷史文件，不參與部署）
 ├── gitlab/                # GitLab 部署設定
 │   ├── run.sh             # Docker Compose 啟動入口（up/logs/stop/status）
 │   ├── docker/            # Docker Compose 方案
@@ -66,7 +67,7 @@ MacDevelopSyStem/
 │       ├── 03-prepare-job.yaml
 │       ├── 04-rbac.yaml
 │       ├── 05-init-configmaps-job.yaml
-│       ├── 10~17-*.yaml   # 8 個 service（log/redis/db/registry/core/...）
+│       ├── 10~17-*.yaml   # 8 個 service（redis/db/registry/core/jobservice/portal/proxy/log）
 │       └── data/          # K8s 專屬持久化資料（僅 .keep 納入版控）
 └── gitlab-runner/         # GitLab Runner 部署設定（CI/CD 執行器）
     ├── run.sh             # 入口：register/up/logs/stop/status
@@ -180,27 +181,33 @@ GitLab 的資料以 bind mount 掛到 `gitlab/docker/data`，而 macOS 上 Docke
 | 無法對 socket 檔 chmod | PostgreSQL 建立 socket 後設定權限失敗，回報 `could not set permissions ...: Invalid argument` |
 | 不保留 setgid 位元 | `gitlab-ctl reconfigure` 檢查 `git-data/repositories` 需為 `2770` 而中止 |
 
-殘留 socket 造成的故障有**兩種表現**，取決於容器是怎麼被啟動的：
+這些限制曾使 GitLab 在「非正常關閉」後無法自行復原：重開機或 daemon 重啟時，
+容器是被 daemon 直接 `start` 的，不會經過 `run.sh`，前次殘留的 socket 檔沒被清掉，
+元件便無法在同一路徑上重建或連線，對外表現為持續 502。
 
-| 啟動方式 | 表現 |
-| --- | --- |
-| `./run.sh`（會先清理） | 正常啟動，無症狀 |
-| daemon 直接 start（重開機、daemon 重啟） | 容器是 `Up (healthy)`，但 HTTP 持續 **502**——詳見〈[GitLab 的已知限制](#gitlab-的已知限制daemon-重啟後需手動救援)〉 |
+因應方式分兩類，**主要元件已從根本移出 virtiofs**，不再倚賴啟動前清理：
 
-因應方式（皆已內建，無須手動處理）：
+| 元件 | 作法 | 設定位置 |
+| --- | --- | --- |
+| PostgreSQL | socket 目錄改掛容器內 tmpfs `/run/postgresql` | `docker-compose.yaml` |
+| Redis | socket 目錄改掛容器內 tmpfs `/run/gitlab-redis` | `docker-compose.yaml` |
+| Rails（Puma） | 停用 unix socket，Workhorse 改連既有的 `tcp://127.0.0.1:8080` | `docker-compose.yaml` |
+| Gitaly、Workhorse | socket 仍在掛載區，但實測可自行重建，由 `run.sh` 的清理兜底 | `run.sh` |
 
-- `run.sh` 於啟動前清除 `data/data` 內殘留的 unix socket，並將
-  `git-data/repositories` 補回 `2770`。
-  注意**這道清理只在手動執行 `run.sh` 時發生**：重開機或 daemon 重啟時容器是被
-  daemon 直接 start 的，不會經過 `run.sh`。
-  此清理**僅在 GitLab 容器未運行時執行**：容器運行中時那些 socket 全是活的
-  （Workhorse→Rails、Rails→Gitaly 等元件靠它們互連），刪掉會使新連線全數失敗，
-  而 `docker compose up -d` 對運行中的容器不會重啟、不會重建 socket，服務將無法自癒。
-- PostgreSQL 與 Redis 的 socket 目錄改掛 tmpfs（`/run/postgresql`、`/run/gitlab-redis`），
-  完全移出 virtiofs。這兩者每次啟動都拿到乾淨的目錄，不受殘留影響，
-  也就不必倚賴上面那道清理。
-- `docker-compose.yaml` 將 PostgreSQL 的 socket 目錄改指向容器內 tmpfs
-  （`/run/postgresql`），避開 chmod 限制；資料庫檔案仍留在 `data/data`，不影響持久化。
+資料庫檔案、Redis 的 RDB 仍留在 `data/data`，持久化不受影響。
+
+Rails 那一項的細節：GitLab 的 puma 本來就同時 bind unix socket 與
+`tcp://127.0.0.1:8080`，因此停用 unix bind 不減少任何能力。設定上
+`puma['socket']` 給**空字串**即可（範本以 `!listen_socket.empty?` 決定是否 bind），
+並須**明確指定** `gitlab_workhorse['auth_backend']`，omnibus 才會把 workhorse 的
+`auth_socket` 設為 `nil`（見容器內 `libraries/puma.rb` 與 `libraries/gitlab_workhorse.rb`）；
+該值與內建預設相同，有意義的是「指定」這個動作本身。
+
+`run.sh` 另外承擔兩件事：啟動前清除 `data/data` 內殘留的 unix socket，並將
+`git-data/repositories` 補回 `2770`。注意**這道清理只在手動執行 `run.sh` 時發生**。
+此清理**僅在 GitLab 容器未運行時執行**：容器運行中時那些 socket 全是活的
+（Rails→Gitaly 等元件靠它們互連），刪掉會使新連線全數失敗，
+而 `docker compose up -d` 對運行中的容器不會重啟、不會重建 socket，服務將無法自癒。
 
 若仍遇到啟動失敗，可先確認殘留 socket 是否清乾淨。**須在容器停止的狀態下檢查**——
 服務正常運行時本來就會有數個活的 socket，那是正常現象，不是殘留：
@@ -440,13 +447,17 @@ Harbor port 8081 / 30081 已刻意錯開 GitLab 的 8080 / 30080，兩者可同�
 Harbor、GitLab、GitLab Runner 於主機重開機後自動恢復，意外掛掉也會自動重啟。
 機制**完全依賴 Docker 內建能力**，不需要安裝任何常駐程式或排程工具。
 
-實測結果（2026-08-21，重啟 Docker Desktop 驗證）：
+實測結果（2026-08-21，完整重啟 Docker Desktop 驗證，全程未執行任何救援指令）：
 
 | 服務 | 容器自動恢復 | 服務可用 |
 | --- | --- | --- |
-| Harbor（8 個容器） | ✅ | ✅ |
-| GitLab Runner | ✅ | ✅ |
-| GitLab | ✅ | ⚠️ 需執行一次救援指令，見〈[GitLab 的已知限制](#gitlab-的已知限制daemon-重啟後需手動救援)〉 |
+| Harbor（8 個容器） | ✅ | ✅ UI／API 皆 200，7 個 component 全 healthy |
+| GitLab Runner | ✅ | ✅ `gitlab-runner verify` 通過 |
+| GitLab | ✅ | ✅ 約 30 秒後 HTTP 200、healthcheck 轉 healthy |
+
+過程中 `nginx`（Harbor proxy）與 `harbor-jobservice` 因啟動競態各崩潰過
+1 次與 3 次（`RestartCount` 為 1、3），皆由 `restart: always` 自動拉回，
+無須人工介入——這正是本機制要達成的效果。
 
 兩個構成要件：
 
@@ -498,45 +509,29 @@ LaunchAgent 才能補救。
 `depends_on` 用於表達啟動順序偏好仍然沒問題——它在 `run.sh` 走 compose 的路徑上有效，
 只是不能被當成正確性的保證。
 
-### GitLab 的已知限制：daemon 重啟後需手動救援
+### GitLab 在 daemon 重啟後的自癒路徑
 
-Harbor 與 Runner 在 daemon 重啟後可完全自行恢復，**GitLab 目前還不行**——
-容器會被拉起，但服務不可用，需人工執行一次救援指令。
+GitLab 的自癒比 Harbor 多一層：容器被拉起只是第一步，容器**內部**的元件
+（Rails、Workhorse、Gitaly…）還得能彼此連上。這些元件以 unix socket 互連，
+而 socket 若落在 virtiofs 掛載區，daemon 直接 `start` 容器時會踩到殘留檔，
+出現「容器 `Up`、HTTP 卻持續 502」的狀況——`restart: always` 對此無能為力，
+因為容器從頭到尾都是活的，壞掉的是它裡面的連線。
 
-根因是 GitLab 各元件之間以 unix socket 互連，而這些 socket 落在 virtiofs 掛載區
-（`gitlab/docker/data/data`）。daemon 直接 start 容器時不會經過 `run.sh`，
-前次殘留的 socket 檔沒被清掉，元件便無法在同一路徑上重建或連線。
+現行設定已把會出事的三段連線全部移出掛載區（見〈[macOS bind mount 的限制與因應](#macos-bind-mount-的限制與因應)〉），
+因此 daemon 重啟後 GitLab 可完全自行恢復。若日後仍遇到啟動後持續 502，
+依序檢查這三處即可定位：
 
-已處理的部分：PostgreSQL 與 Redis 的 socket 已移到容器內 tmpfs（見上方
-〈macOS bind mount 的限制與因應〉），這兩者不再受影響。
-**尚未處理**：Rails（Puma）、Workhorse、Gitaly 三者的 socket 仍在 virtiofs 上，
-其中 Workhorse→Rails 這一段是目前的失效點。
+| 檢查點 | 指令 | 正常表現 |
+| --- | --- | --- |
+| 元件是否反覆重啟 | `docker exec gitlab gitlab-ctl status` | 各服務存活秒數持續增長，不會反覆歸零 |
+| Workhorse→Rails | `docker exec gitlab tail /var/log/gitlab/gitlab-workhorse/current` | 無 `connect: operation not supported` |
+| Redis／PostgreSQL | `docker exec gitlab tail /var/log/gitlab/redis/current` | 無 `bind: Operation not supported` |
 
-徵兆要特別留意，因為**容器本身看起來完全正常**：
-
-| 觀察點 | 表現 |
-| --- | --- |
-| `docker ps` | `Up ... (healthy)`，不會顯示 Restarting |
-| `curl http://localhost:8080/users/sign_in` | 持續回 **502**，等再久也不會好 |
-| `docker exec gitlab gitlab-ctl status` | 多數服務為 `run`，但 puma 的存活秒數反覆歸零 |
-| `docker exec gitlab tail /var/log/gitlab/gitlab-workhorse/current` | `dial unix .../gitlab.socket: connect: operation not supported` |
-
-`restart: always` 救不了這種狀況——**容器從頭到尾都是活的，出問題的是它裡面的元件連線**；
-容器的 healthcheck 也驗不出來。
-
-救援方式是走一次完整流程，讓 `run.sh` 的 socket 清理有機會執行：
+真的卡住時，走一次完整流程讓 `run.sh` 的 socket 清理有機會執行：
 
 ```bash
 cd gitlab && ./run.sh stop && ./run.sh
 ```
-
-約一到兩分鐘後 `gitlab-ctl status` 應顯示 9 個服務全為 `run`，HTTP 回 200。
-
-> **待辦**：要讓 GitLab 也能完全自愈，需將 Puma、Workhorse、Gitaly 三者的通訊
-> 由 unix socket 改為 TCP（GitLab omnibus 原生支援，用於分離式部署）。
-> 單純把 socket 目錄改掛 tmpfs 並不可行——`connect()` 需要對 socket 檔有寫入權限，
-> 而 virtiofs 放寬了權限檢查、tmpfs 不會，改掛後反而會被權限擋下。
-> 此項屬 GitLab 內部通訊架構調整，已另行記錄，不在本次改動範圍。
 
 ### 查看 log
 
@@ -564,12 +559,17 @@ cd harbor && ./run.sh stop
 ```
 
 > 同理，`docker kill` 無法用來測試崩潰自愈——它會被視為手動停止。
-> 要模擬真正的意外退出，請讓容器內的主行程自行結束：
+> 要模擬真正的意外退出，請從容器**內部**把主行程結束掉：
 >
 > ```bash
 > docker exec harbor-core kill -TERM 1
+> sleep 15   # 留時間讓 daemon 重建容器，立刻查會看到舊值
 > docker inspect -f '{{.State.Status}} {{.RestartCount}}' harbor-core   # RestartCount 應遞增
 > ```
+>
+> 若某個容器對此沒有反應，多半是它的 PID 1 忽略 `SIGTERM`（PID 1 不套用預設訊號處置，
+> 未自行註冊 handler 的行程收到 `SIGTERM` 不會結束）。改送 `KILL` 即可：
+> `docker exec <容器> kill -KILL 1`。
 
 ---
 
