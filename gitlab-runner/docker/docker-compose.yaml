@@ -9,7 +9,7 @@ services:
       dockerfile: Dockerfile
     image: macdev/gitlab-runner:latest
     container_name: gitlab-runner
-    restart: unless-stopped
+    restart: always
     volumes:
       # Runner 設定（註冊後的 config.toml，含認證權杖）以 bind mount 保存，
       # 已由 .gitignore 排除，不納入版控。

@@ -47,7 +47,11 @@ notification:
   webhook_job_http_client_timeout: 3
 
 log:
+  # level 仍有作用：prepare 會把它帶進各 service 的環境變數。
   level: info
+  # local 這段已無作用——harbor-log 收集容器已移除，各 service 改用 Docker 的
+  # json-file driver（輪替設定寫在 docker-compose.yaml 的 logging 區塊）。
+  # 保留欄位僅為通過 prepare 的設定驗證，調整這裡不會有任何效果。
   local:
     rotate_count: 50
     rotate_size: 200M

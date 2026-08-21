@@ -1,6 +1,6 @@
 # Harbor v2.15.2 本機開發部署。
 #
-# 服務組成：log / registry / registryctl / postgresql / redis / core /
+# 服務組成：registry / registryctl / postgresql / redis / core /
 #           portal / jobservice / proxy
 #
 # 對外 port：8081 -> proxy:8080（HTTP）
@@ -11,38 +11,16 @@
 # 重要設計：
 #   - 以 name: harbor 固定 compose 專案名，避免與其他同樣放在 docker/ 目錄、
 #     專案名同被推導為 "docker" 的專案互相視為 orphan 而誤刪。
-#   - 所有 service 透過 syslog driver 將 log 送往 harbor-log 的 1514 埠，
-#     因此除 log 本身外，全部 service 的 depends_on 對 log 採
-#     condition: service_healthy，等 harbor-log 的 syslog 真正就緒後才啟動，
-#     避免冷啟動時 "logging driver: connection refused" 的搶跑問題
-#     （在 Apple Silicon 以模擬執行 amd64 image 時 log 就緒較慢，尤其關鍵）。
+#   - 各 service 一律以 Docker 內建的 json-file driver 寫 log（50m x 3 輪替），
+#     不依賴任何收集用容器。此為刻意設計：主機重開機或 Docker daemon 單獨重啟時，
+#     daemon 是逐容器依 restart policy 恢復，「完全不走 compose、不看 depends_on」，
+#     故容器啟動時不得依賴其他容器就緒。早期版本改用 syslog driver 送往
+#     harbor-log 的 1514 埠，正因此在 daemon 恢復時連不上而集體 exit 128，
+#     必須另設守護巡檢才能補救；改為 json-file 後 restart: always 即可獨立自愈。
+#     查看 log 改用 docker logs <容器> 或 ../run.sh logs。
 name: harbor
 
 services:
-  log:
-    image: goharbor/harbor-log:v2.15.2
-    container_name: harbor-log
-    restart: always
-    cap_drop:
-      - ALL
-    cap_add:
-      - CHOWN
-      - DAC_OVERRIDE
-      - SETGID
-      - SETUID
-    volumes:
-      - ./data/log:/var/log/docker/:z
-      - type: bind
-        source: ./data/config/log/logrotate.conf
-        target: /etc/logrotate.d/logrotate.conf
-      - type: bind
-        source: ./data/config/log/rsyslog_docker.conf
-        target: /etc/rsyslog.d/rsyslog_docker.conf
-    ports:
-      - "127.0.0.1:1514:10514"
-    networks:
-      - harbor
-
   registry:
     image: goharbor/registry-photon:v2.15.2
     container_name: registry
@@ -64,14 +42,11 @@ services:
         target: /harbor_cust_cert
     networks:
       - harbor
-    depends_on:
-      log:
-        condition: service_healthy
     logging:
-      driver: "syslog"
+      driver: "json-file"
       options:
-        syslog-address: "tcp://127.0.0.1:1514"
-        tag: "registry"
+        max-size: "50m"
+        max-file: "3"
 
   registryctl:
     image: goharbor/harbor-registryctl:v2.15.2
@@ -97,15 +72,13 @@ services:
     networks:
       - harbor
     depends_on:
-      log:
-        condition: service_healthy
       registry:
         condition: service_started
     logging:
-      driver: "syslog"
+      driver: "json-file"
       options:
-        syslog-address: "tcp://127.0.0.1:1514"
-        tag: "registryctl"
+        max-size: "50m"
+        max-file: "3"
 
   # 內建 PostgreSQL。v2.15.2 映像的 entrypoint 為
   # ["/docker-entrypoint.sh", "15", "18"]，兩個參數即舊／新的 PG 大版本；
@@ -132,14 +105,11 @@ services:
       harbor:
     env_file:
       - ./data/config/db/env
-    depends_on:
-      log:
-        condition: service_healthy
     logging:
-      driver: "syslog"
+      driver: "json-file"
       options:
-        syslog-address: "tcp://127.0.0.1:1514"
-        tag: "postgresql"
+        max-size: "50m"
+        max-file: "3"
 
   # 快取與 jobservice 任務佇列。Harbor v2.15.2 起後端由 Redis 換成 Valkey，
   # 映像名亦隨之從 goharbor/redis-photon 改為 goharbor/valkey-photon
@@ -160,14 +130,11 @@ services:
       - ./data/redis:/var/lib/redis
     networks:
       harbor:
-    depends_on:
-      log:
-        condition: service_healthy
     logging:
-      driver: "syslog"
+      driver: "json-file"
       options:
-        syslog-address: "tcp://127.0.0.1:1514"
-        tag: "redis"
+        max-size: "50m"
+        max-file: "3"
 
   core:
     image: goharbor/harbor-core:v2.15.2
@@ -202,8 +169,6 @@ services:
     networks:
       harbor:
     depends_on:
-      log:
-        condition: service_healthy
       registry:
         condition: service_started
       redis:
@@ -211,10 +176,10 @@ services:
       postgresql:
         condition: service_started
     logging:
-      driver: "syslog"
+      driver: "json-file"
       options:
-        syslog-address: "tcp://127.0.0.1:1514"
-        tag: "core"
+        max-size: "50m"
+        max-file: "3"
 
   portal:
     image: goharbor/harbor-portal:v2.15.2
@@ -233,14 +198,11 @@ services:
         target: /etc/nginx/nginx.conf
     networks:
       - harbor
-    depends_on:
-      log:
-        condition: service_healthy
     logging:
-      driver: "syslog"
+      driver: "json-file"
       options:
-        syslog-address: "tcp://127.0.0.1:1514"
-        tag: "portal"
+        max-size: "50m"
+        max-file: "3"
 
   jobservice:
     image: goharbor/harbor-jobservice:v2.15.2
@@ -265,15 +227,13 @@ services:
     networks:
       - harbor
     depends_on:
-      log:
-        condition: service_healthy
       core:
         condition: service_started
     logging:
-      driver: "syslog"
+      driver: "json-file"
       options:
-        syslog-address: "tcp://127.0.0.1:1514"
-        tag: "jobservice"
+        max-size: "50m"
+        max-file: "3"
 
   proxy:
     image: goharbor/nginx-photon:v2.15.2
@@ -296,8 +256,6 @@ services:
     ports:
       - "8081:8080"
     depends_on:
-      log:
-        condition: service_healthy
       registry:
         condition: service_started
       core:
@@ -305,10 +263,10 @@ services:
       portal:
         condition: service_started
     logging:
-      driver: "syslog"
+      driver: "json-file"
       options:
-        syslog-address: "tcp://127.0.0.1:1514"
-        tag: "proxy"
+        max-size: "50m"
+        max-file: "3"
 
 networks:
   harbor:

@@ -21,12 +21,16 @@ mkdir -p "${DOCKER_DIR}/data"/{config,logs,data}
 #######################################
 # 清除前次執行殘留的 unix socket 與修正 git-data 權限。
 #
-# macOS 的 virtiofs bind mount 有兩項限制，會讓 GitLab 在「非正常關閉」後
+# macOS 的 virtiofs bind mount 有三項限制，會讓 GitLab 在「非正常關閉」後
 # 無法再啟動（開機自動啟動時最常見）：
-#   1. 無法 unlink 既有的 socket 檔，Redis/Gitaly/Workhorse 啟動時
-#      因刪不掉舊 socket 而失敗（Operation not supported）。
-#   2. 無法保留 setgid 位元，reconfigure 檢查 repositories 需為 2770 會失敗。
-# 啟動前先行清理與補正，可避免容器陷入無限重啟。
+#   1. 無法 unlink／重新 bind 既有的 socket 檔，元件啟動時因處理不掉舊 socket
+#      而失敗（Operation not supported）。
+#   2. 無法對 socket 檔 chmod，建立後設權限的元件會啟動失敗（EINVAL）。
+#   3. 無法保留 setgid 位元，reconfigure 檢查 repositories 需為 2770 會失敗。
+# 前兩項對 PostgreSQL、Redis、Rails(Puma) 已由 docker-compose.yaml 從根本解掉
+# （前兩者的 socket 移到 tmpfs，Rails 則停用 unix socket 改走 TCP），不再依賴
+# 本函式；留在掛載區的只剩 Gitaly 與 Workhorse 的 socket。啟動前先行清理與
+# 補正，可避免容器陷入無限重啟。
 #
 # 僅在容器「未運行」時才動作。GitLab 各元件之間是靠這些 unix socket 互連
 # （Workhorse→Rails、Rails→Gitaly 等），容器運行中時它們全是活的，而
@@ -43,10 +47,9 @@ mkdir -p "${DOCKER_DIR}/data"/{config,logs,data}
 #   清理項目訊息
 #######################################
 clean_stale_state() {
-  # 以 container_name 精確比對，刻意不用 docker compose ps：本目錄的 compose
-  # 專案名被推導為 "docker"，與其他同樣位於 docker/ 目錄的專案
-  # （Tw_stock_server_monitor、LNGclip、FlightPrice…）相同，compose ps 會把
-  # 它們的容器一併列出，導致 GitLab 已停止時仍被誤判為運行中而跳過清理。
+  # 以 container_name 精確比對。compose 檔已指定 name: gitlab，compose ps 不再
+  # 混入他專案容器，但此處仍用 docker ps：判斷的是「這一個容器是否運行中」，
+  # 直接對 container_name 比對語意最精確，也不受未來專案名調整影響。
   local running
   running="$(docker ps --filter 'name=^gitlab$' --filter 'status=running' --quiet 2>/dev/null || true)"
   if [[ -n "${running}" ]]; then

@@ -7,6 +7,12 @@
 # 資料持久化：使用 bind mount 至 ./data/{config,data,logs}（Docker 專屬），
 # 由 ../run.sh 啟動前確保目錄已建立。
 # K8s 方案有自己獨立的 k8s/data，兩種部署不共用儲存。
+#
+# name 必須明確指定：不指定時 Compose 會以所在目錄名（docker）作為專案名，
+# 而其他專案的 compose 檔同樣放在各自的 docker/ 目錄，會被判定為同一專案，
+# 導致 orphan 警告與跨專案誤刪的風險。
+name: gitlab
+
 services:
   gitlab:
     build:
@@ -15,7 +21,7 @@ services:
     image: macdev/gitlab:latest
     container_name: gitlab
     hostname: gitlab.local
-    restart: unless-stopped
+    restart: always
     shm_size: '256m'
     # 容器記憶體上限 4G（搭配上方 GITLAB_OMNIBUS_CONFIG 瘦身，常駐約 2.5-3G）。
     # 非 swarm 的 docker compose up 下，deploy.resources.limits.memory 有效（套為 cgroup limit）；
@@ -50,13 +56,35 @@ services:
         postgresql['unix_socket_directory'] = '/run/postgresql'
         gitlab_rails['db_host'] = '/run/postgresql'
         postgresql['max_connections'] = 100
+        # Redis 的 socket 同樣移出掛載區。daemon 重啟時容器是被直接 start、不會走
+        # ../run.sh，殘留在 virtiofs 上的 redis.socket 不會被清掉，redis 會以
+        # 「Failed opening Unix socket: bind: Operation not supported」啟動失敗，
+        # 連帶讓 puma 與 sidekiq 反覆崩潰、對外只表現為 502。
+        # 放到 tmpfs 後每次啟動都是乾淨的，restart: always 才對 GitLab 真正成立。
+        # RDB 檔仍留在 ./data/data 的 redis/ 目錄，不受影響。
+        redis['unixsocket'] = '/run/gitlab-redis/redis.socket'
+        gitlab_rails['redis_socket'] = '/run/gitlab-redis/redis.socket'
+        # Puma 對 Rails 的 unix socket 直接停用，改讓 Workhorse 走既有的 TCP 埠。
+        # 原因同上：daemon 重啟後殘留在 virtiofs 上的 gitlab.socket 無法被重新
+        # bind，Workhorse 連過去會得到「connect: operation not supported」，
+        # 對外一樣是 502。Puma 本來就同時 bind tcp://127.0.0.1:8080（見 puma.rb），
+        # 停掉 unix bind 不減少任何能力，且完全不依賴掛載區的檔案狀態。
+        # puma['socket'] 給空字串即可：範本以 `!listen_socket.empty?` 決定是否 bind。
+        # auth_backend 必須「明確指定」，omnibus 才會把 workhorse 的 auth_socket
+        # 設為 nil（見 libraries/puma.rb:42 與 libraries/gitlab_workhorse.rb:24）；
+        # 值與內建預設相同，僅指定行為本身有意義。
+        puma['socket'] = ''
+        gitlab_workhorse['auth_backend'] = 'http://localhost:8080'
         registry['enable'] = false            # 已有獨立 Harbor，關閉內建 registry
         gitlab_kas['enable'] = false          # 關閉 K8s Agent Server
-    # PostgreSQL 的 unix socket 目錄（見上方 GITLAB_OMNIBUS_CONFIG 說明）；
-    # 置於容器內 tmpfs，避開 virtiofs 對 socket 檔 chmod/unlink 的限制。
-    # uid/gid 996 為 image 內建的 gitlab-psql 帳號。
+    # PostgreSQL 與 Redis 的 unix socket 目錄（見上方 GITLAB_OMNIBUS_CONFIG 說明）；
+    # 置於容器內 tmpfs，避開 virtiofs 對 socket 檔 chmod/unlink/bind 的限制。
+    # uid/gid 996、997 分別為 image 內建的 gitlab-psql 與 gitlab-redis 帳號；
+    # mode 0755 讓以 git 執行的 Rails、Sidekiq、Workhorse 得以進入目錄連線
+    # （socket 本身由 omnibus 以 unixsocketperm 777 建立）。
     tmpfs:
       - /run/postgresql:uid=996,gid=996,mode=0755
+      - /run/gitlab-redis:uid=997,gid=997,mode=0755
     volumes:
       - ./data/config:/etc/gitlab
       - ./data/logs:/var/log/gitlab

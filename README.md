@@ -20,7 +20,7 @@
 
 各服務的映像版本一律**釘選**，不使用浮動的 `:latest`。GitLab 與 Runner 釘選於各自的
 `docker/Dockerfile`；Harbor 為多映像架構，實際生效的是 `docker/docker-compose.yaml`
-的 9 個 image tag 與 `docker/build.sh` 的 `HARBOR_VERSION`（`harbor/docker/Dockerfile`
+的 8 個 image tag 與 `docker/build.sh` 的 `HARBOR_VERSION`（`harbor/docker/Dockerfile`
 僅為佔位、不參與部署）。升級注意事項見「[版本升級](#版本升級)」。
 
 K8s 方案的 manifest 版本獨立維護，目前仍停在 Harbor `v2.11.0` 與 `gitlab-ce:latest`，
@@ -31,12 +31,10 @@ K8s 方案的 manifest 版本獨立維護，目前仍停在 Harbor `v2.11.0` 與
 ```text
 MacDevelopSyStem/
 ├── README.md              # 專案說明文件
-├── install-all.sh         # 一鍵安裝三服務的開機自動啟動 LaunchAgent
-├── uninstall-all.sh       # 一鍵卸載（不影響執行中的容器）
 ├── .gitignore             # Git 忽略清單
+├── plans/                 # 各次改動的實作計畫紀錄（歷史文件，不參與部署）
 ├── gitlab/                # GitLab 部署設定
 │   ├── run.sh             # Docker Compose 啟動入口（up/logs/stop/status）
-│   ├── boot/              # 開機自動啟動 LaunchAgent（autostart）
 │   ├── docker/            # Docker Compose 方案
 │   │   ├── build.sh
 │   │   ├── Dockerfile
@@ -52,7 +50,6 @@ MacDevelopSyStem/
 │       └── 03-service.yaml
 ├── harbor/                # Harbor 部署設定
 │   ├── run.sh             # Docker Compose 啟動入口（up/logs/stop/status）
-│   ├── boot/              # 開機自動啟動 LaunchAgent（autostart + watchdog）
 │   ├── docker/            # Docker Compose 方案
 │   │   ├── build.sh       # 拉 image + 用 prepare 產生各 service 設定
 │   │   ├── Dockerfile
@@ -70,18 +67,16 @@ MacDevelopSyStem/
 │       ├── 03-prepare-job.yaml
 │       ├── 04-rbac.yaml
 │       ├── 05-init-configmaps-job.yaml
-│       ├── 10~17-*.yaml   # 8 個 service（log/redis/db/registry/core/...）
+│       ├── 10~17-*.yaml   # 8 個 service（redis/db/registry/core/jobservice/portal/proxy/log）
 │       └── data/          # K8s 專屬持久化資料（僅 .keep 納入版控）
-├── gitlab-runner/         # GitLab Runner 部署設定（CI/CD 執行器）
-│   ├── run.sh             # 入口：register/up/logs/stop/status
-│   ├── boot/              # 開機自動啟動 LaunchAgent（autostart）
-│   └── docker/            # Docker Compose 方案（docker executor）
-│       ├── build.sh
-│       ├── Dockerfile
-│       ├── docker-compose.yaml
-│       ├── .env.example   # CI_SERVER_URL / RUNNER_TOKEN 等
-│       └── data/          # Runner 設定 config.toml（僅 .keep 納入版控）
-└── logs/                  # 各工具運行日誌（執行時建立）
+└── gitlab-runner/         # GitLab Runner 部署設定（CI/CD 執行器）
+    ├── run.sh             # 入口：register/up/logs/stop/status
+    └── docker/            # Docker Compose 方案（docker executor）
+        ├── build.sh
+        ├── Dockerfile
+        ├── docker-compose.yaml
+        ├── .env.example   # CI_SERVER_URL / RUNNER_TOKEN 等
+        └── data/          # Runner 設定 config.toml（僅 .keep 納入版控）
 ```
 
 ### 資料持久化設計
@@ -178,24 +173,41 @@ cd gitlab/docker
 #### macOS bind mount 的限制與因應
 
 GitLab 的資料以 bind mount 掛到 `gitlab/docker/data`，而 macOS 上 Docker Desktop
-採 virtiofs 分享目錄，對 unix socket 檔案有兩項限制，會讓非正常關機後的 GitLab
-陷入無限重啟（`docker ps` 顯示 `Restarting`）：
+採 virtiofs 分享目錄，對 unix socket 檔案有三項限制：
 
 | 限制 | 症狀 |
 | --- | --- |
-| 無法 unlink 既有 socket 檔 | Redis／Gitaly／Workhorse 啟動時刪不掉前次殘留的 socket，回報 `Operation not supported` |
+| 無法 unlink／bind 既有 socket 檔 | 元件啟動時刪不掉前次殘留的 socket，回報 `bind: Operation not supported` |
 | 無法對 socket 檔 chmod | PostgreSQL 建立 socket 後設定權限失敗，回報 `could not set permissions ...: Invalid argument` |
 | 不保留 setgid 位元 | `gitlab-ctl reconfigure` 檢查 `git-data/repositories` 需為 `2770` 而中止 |
 
-因應方式（皆已內建，無須手動處理）：
+這些限制曾使 GitLab 在「非正常關閉」後無法自行復原：重開機或 daemon 重啟時，
+容器是被 daemon 直接 `start` 的，不會經過 `run.sh`，前次殘留的 socket 檔沒被清掉，
+元件便無法在同一路徑上重建或連線，對外表現為持續 502。
 
-- `run.sh` 於啟動前清除 `data/data` 內殘留的 unix socket，並將
-  `git-data/repositories` 補回 `2770`。開機自動啟動同樣經由 `run.sh`，故一併涵蓋。
-  此清理**僅在 GitLab 容器未運行時執行**：容器運行中時那些 socket 全是活的
-  （Workhorse→Rails、Rails→Gitaly 等元件靠它們互連），刪掉會使新連線全數失敗，
-  而 `docker compose up -d` 對運行中的容器不會重啟、不會重建 socket，服務將無法自癒。
-- `docker-compose.yaml` 將 PostgreSQL 的 socket 目錄改指向容器內 tmpfs
-  （`/run/postgresql`），避開 chmod 限制；資料庫檔案仍留在 `data/data`，不影響持久化。
+因應方式分兩類，**主要元件已從根本移出 virtiofs**，不再倚賴啟動前清理：
+
+| 元件 | 作法 | 設定位置 |
+| --- | --- | --- |
+| PostgreSQL | socket 目錄改掛容器內 tmpfs `/run/postgresql` | `docker-compose.yaml` |
+| Redis | socket 目錄改掛容器內 tmpfs `/run/gitlab-redis` | `docker-compose.yaml` |
+| Rails（Puma） | 停用 unix socket，Workhorse 改連既有的 `tcp://127.0.0.1:8080` | `docker-compose.yaml` |
+| Gitaly、Workhorse | socket 仍在掛載區，但實測可自行重建，由 `run.sh` 的清理兜底 | `run.sh` |
+
+資料庫檔案、Redis 的 RDB 仍留在 `data/data`，持久化不受影響。
+
+Rails 那一項的細節：GitLab 的 puma 本來就同時 bind unix socket 與
+`tcp://127.0.0.1:8080`，因此停用 unix bind 不減少任何能力。設定上
+`puma['socket']` 給**空字串**即可（範本以 `!listen_socket.empty?` 決定是否 bind），
+並須**明確指定** `gitlab_workhorse['auth_backend']`，omnibus 才會把 workhorse 的
+`auth_socket` 設為 `nil`（見容器內 `libraries/puma.rb` 與 `libraries/gitlab_workhorse.rb`）；
+該值與內建預設相同，有意義的是「指定」這個動作本身。
+
+`run.sh` 另外承擔兩件事：啟動前清除 `data/data` 內殘留的 unix socket，並將
+`git-data/repositories` 補回 `2770`。注意**這道清理只在手動執行 `run.sh` 時發生**。
+此清理**僅在 GitLab 容器未運行時執行**：容器運行中時那些 socket 全是活的
+（Rails→Gitaly 等元件靠它們互連），刪掉會使新連線全數失敗，
+而 `docker compose up -d` 對運行中的容器不會重啟、不會重建 socket，服務將無法自癒。
 
 若仍遇到啟動失敗，可先確認殘留 socket 是否清乾淨。**須在容器停止的狀態下檢查**——
 服務正常運行時本來就會有數個活的 socket，那是正常現象，不是殘留：
@@ -333,7 +345,7 @@ cd ..
 
 ## Harbor 部署
 
-Harbor 為私有 Container Registry，包含 9 個 service（log / registry / registryctl /
+Harbor 為私有 Container Registry，包含 8 個 service（registry / registryctl /
 postgresql / redis / core / portal / jobservice / proxy），與 GitLab 一樣提供
 Docker Compose 與 K8s 兩種方案。Docker Compose 方案版本固定 `v2.15.2`。
 
@@ -375,51 +387,11 @@ cd harbor
 
 - **固定 compose 專案名為 `harbor`**：`docker-compose.yaml` 以 `name: harbor` 避免與其他同放在
   `docker/` 目錄、專案名同被推導為 `docker` 的專案互相視為 orphan。
-- **log 就緒把關**：各 service 以 syslog driver 將 log 送往 `harbor-log:1514`，故其 `depends_on`
-  對 `log` 採 `condition: service_healthy`，等 harbor-log 真正就緒才啟動，避免冷啟動時
-  `logging driver: connection refused`（在 Apple Silicon 以模擬執行 amd64 image 時尤其關鍵）。
+- **log 不跨容器依賴**：各 service 一律以 Docker 內建的 `json-file` driver 寫 log
+  （`50m` x 3 輪替），不依賴任何收集用容器。這讓每個容器都能獨立恢復，`restart: always`
+  在 daemon 自動恢復時才會真正生效，詳見[開機自動啟動與自動修復](#開機自動啟動與自動修復)。
 - **registry 的 `root.crt`**：改由 registry 設定目錄一併掛入，不另以單檔疊掛，以避開
   virtiofs「於目錄掛載上再疊單檔掛載」的 mountpoint 衝突；此複製動作已內建於 `./build.sh`。
-
-#### 開機自動啟動與守護巡檢（選用）
-
-主機重開機時，Docker daemon 會依各容器的 `restart:always` **各自**恢復容器，此路徑
-繞過了 compose 的 `depends_on` 編排，導致眾 service 搶在 `harbor-log` 就緒前啟動，
-syslog logging driver 連不上 `1514` 而以 `ExitCode 128` 集體退出（即上述「log 就緒把關」
-僅在走 `docker compose up` 時生效，daemon 自動恢復時不生效）。
-
-`harbor/boot/` 提供兩個互補的 macOS LaunchAgent 根治此問題：
-
-- **autostart**（`RunAtLoad`）：使用者登入（主機重開機）後等待 Docker daemon 就緒，
-  再走 `run.sh`（`docker compose up -d`）以正確順序拉起，確保 `harbor-log` 先 healthy。
-- **watchdog**（`StartInterval` 120s）：補強 autostart 的盲區——Docker daemon 若**單獨
-  重啟**（Docker Desktop 更新、手動重啟、daemon 崩潰恢復）並不會重新登入、故不觸發
-  autostart，此時又落回上述冷啟動競態而僅剩 `harbor-log` 存活、其餘集體陣亡無人拉回。
-  watchdog 定期巡檢，偵測「容器存在卻未全數 running」即以 `run.sh` 依正確順序補起；
-  容器完全不存在（多為人為 `down`）時則不動作，以免違背意願拉起。兩者共用 mkdir
-  原子鎖，避免登入瞬間並發 `compose` 衝突。
-
-```bash
-cd harbor/boot
-./install.sh             # 安裝並載入兩個 LaunchAgent（autostart + watchdog）
-./uninstall.sh           # 停用並移除（不影響執行中的容器）
-```
-
-| 檔案 | 說明 |
-| --- | --- |
-| `harbor-autostart.sh` | 登入觸發：輪詢等待 Docker daemon（上限 300s）後執行 `run.sh` |
-| `harbor-watchdog.sh` | 定期巡檢（120s）：容器未全數 running 即以 `run.sh` 補起 |
-| `com.chen.harbor-autostart.plist` | autostart 範本（`RunAtLoad`），`__HARBOR_DIR__` 由 `install.sh` 替換 |
-| `com.chen.harbor-watchdog.plist` | watchdog 範本（`StartInterval`），同上替換 |
-| `install.sh` / `uninstall.sh` | 一併安裝（`launchctl bootstrap`）／卸載（`launchctl bootout`）兩個 agent |
-
-```bash
-# 不必重開機，立即手動測試一次（停一個容器，watchdog 應自動補回）
-launchctl kickstart -k gui/$(id -u)/com.chen.harbor-watchdog
-tail -f harbor/logs/harbor-watchdog.log      # 觀察執行記錄
-```
-
-> log 寫於 `harbor/logs/`（已於 `.gitignore` 排除）。
 
 ### 透過 Kubernetes
 
@@ -470,53 +442,134 @@ Harbor port 8081 / 30081 已刻意錯開 GitLab 的 8080 / 30080，兩者可同�
 
 ---
 
-## 開機自動啟動（全部服務一鍵）
+## 開機自動啟動與自動修復
 
-讓 Harbor、GitLab、GitLab Runner 於主機重開機（使用者登入）後自動恢復。各服務於 `boot/`
-提供 macOS LaunchAgent，由 `install.sh` 將 plist 範本的路徑佔位符替換為實際絕對路徑後寫入
-`~/Library/LaunchAgents/` 並 `launchctl bootstrap` 載入。
+Harbor、GitLab、GitLab Runner 於主機重開機後自動恢復，意外掛掉也會自動重啟。
+機制**完全依賴 Docker 內建能力**，不需要安裝任何常駐程式或排程工具。
 
-> **前提**：Docker Desktop 須設為「登入時自動啟動」，否則重開機後 Docker daemon 不會啟動，
-> 任何 LaunchAgent 都將空等逾時。請於 Docker Desktop → Settings → General 勾選
-> "Start Docker Desktop when you sign in"。
+實測結果（2026-08-21，完整重啟 Docker Desktop 驗證，全程未執行任何救援指令）：
 
-| 服務 | 機制 | 說明 |
+| 服務 | 容器自動恢復 | 服務可用 |
 | --- | --- | --- |
-| Harbor | autostart + watchdog | 多 service 有冷啟動競態，詳見上方「開機自動啟動與守護巡檢」 |
-| GitLab | autostart | 單容器，登入後等 Docker daemon 就緒再以 `run.sh` 拉起 |
-| GitLab Runner | autostart | 單容器，依賴 GitLab；等 daemon 與 GitLab health 就緒再 `run.sh up` |
+| Harbor（8 個容器） | ✅ | ✅ UI／API 皆 200，7 個 component 全 healthy |
+| GitLab Runner | ✅ | ✅ `gitlab-runner verify` 通過 |
+| GitLab | ✅ | ✅ 約 30 秒後 HTTP 200、healthcheck 轉 healthy |
 
-於專案根一鍵安裝／卸載三者：
+過程中 `nginx`（Harbor proxy）與 `harbor-jobservice` 因啟動競態各崩潰過
+1 次與 3 次（`RestartCount` 為 1、3），皆由 `restart: always` 自動拉回，
+無須人工介入——這正是本機制要達成的效果。
 
-```bash
-./install-all.sh          # 依序安裝 Harbor、GitLab、GitLab Runner 的 LaunchAgent
-./uninstall-all.sh        # 反向卸載（不影響執行中的容器）
-```
+兩個構成要件：
 
-亦可只裝單一服務（各自獨立）：
+| 要件 | 設定位置 | 作用 |
+| --- | --- | --- |
+| Docker Desktop 登入自啟 | Docker Desktop → Settings → General | 開機後拉起 Docker daemon |
+| `restart: always` | 三個服務的 `docker-compose.yaml` | daemon 就緒後恢復容器；容器內主行程一退出就重啟（不看 exit code） |
 
-```bash
-cd gitlab/boot && ./install.sh             # 僅 GitLab
-cd gitlab-runner/boot && ./install.sh      # 僅 GitLab Runner（需先 ./run.sh register）
-```
+> **前提**：Docker Desktop 須勾選 "Start Docker Desktop when you sign in"，
+> 否則重開機後 daemon 不會啟動，容器自然無從恢復。這是唯一需要手動確認的設定。
 
-GitLab / GitLab Runner 的 `boot/` 檔案：
-
-| 檔案 | 說明 |
-| --- | --- |
-| `gitlab-autostart.sh`、`gitlab-runner-autostart.sh` | 登入觸發：輪詢等待 Docker daemon（上限 300s）；Runner 另等 GitLab health 就緒後執行 `run.sh` |
-| `com.chen.gitlab-autostart.plist`、`com.chen.gitlab-runner-autostart.plist` | autostart 範本（`RunAtLoad`），佔位符由 `install.sh` 替換 |
-| `install.sh` / `uninstall.sh` | 安裝（`launchctl bootstrap`）／卸載（`launchctl bootout`）該 agent |
-
-不必重開機，立即手動測試一次：
+驗證目前狀態：
 
 ```bash
-launchctl kickstart -k gui/$(id -u)/com.chen.gitlab-autostart
-tail -f gitlab/logs/gitlab-autostart.log
+# Docker Desktop 是否設為登入自啟（應為 true）
+grep AutoStart ~/Library/Group\ Containers/group.com.docker/settings-store.json
+
+# 三個服務的 restart policy（應全為 always）
+docker inspect -f '{{.Name}} {{.HostConfig.RestartPolicy.Name}}' \
+  gitlab gitlab-runner harbor-core
 ```
 
-> Runner 的 autostart 在尚未 `register`（無 `docker/data/config.toml`）時會記 log 後略過，
-> 不視為錯誤。各 log 寫於對應服務的 `logs/`（已於 `.gitignore` 排除）。
+### 為什麼跨容器啟動依賴必須能靠 restart 自愈
+
+這是本專案 compose 設定的一項關鍵約束，理解它才能避免日後改壞。
+
+`depends_on`（含 `condition: service_healthy`）**只在執行 `docker compose up` 時有效**。
+主機重開機或 Docker daemon 單獨重啟（Docker Desktop 更新、手動重啟、daemon 崩潰恢復）時，
+daemon 是**逐容器依各自 restart policy 恢復，不走 compose、也不讀 `depends_on`**。
+
+早期版本的 Harbor 讓 8 個 service 都以 `syslog` driver 將 log 送往 `harbor-log` 的 `1514` 埠，
+並用 `depends_on` 對 `log` 把關。結果在 daemon 恢復容器時，眾 service 搶在 `harbor-log`
+就緒前啟動、連不上 `1514`，最終只剩 `harbor-log` 存活——當時必須另外掛一支守護巡檢的
+LaunchAgent 才能補救。
+
+關鍵在於**這種失敗 restart policy 救不了**：logging driver 連不上屬於「容器 start 失敗」，
+容器根本沒進入運行狀態，restart manager 不接手，`restart: always` 形同虛設。
+
+改用 `json-file` driver 後，log 不再跨容器，這類失敗就消失了。
+
+**新增或修改 service 時，跨容器依賴本身不是問題，「無法靠 restart 自愈的跨容器依賴」才是。**
+兩者的差別：
+
+- ✅ 可自愈：`proxy` 的 nginx 設定含 `upstream core { server core:8080; }`，`core` 未運行時
+  nginx 會因 DNS 解析失敗而退出——但這是容器**運行後退出**，`restart: always` 會不斷重試，
+  等 `core` 起來後自然恢復。
+- ❌ 不可自愈：logging driver 連不上收集端，容器**連 start 都失敗**，restart policy 不介入。
+
+`depends_on` 用於表達啟動順序偏好仍然沒問題——它在 `run.sh` 走 compose 的路徑上有效，
+只是不能被當成正確性的保證。
+
+### GitLab 在 daemon 重啟後的自癒路徑
+
+GitLab 的自癒比 Harbor 多一層：容器被拉起只是第一步，容器**內部**的元件
+（Rails、Workhorse、Gitaly…）還得能彼此連上。這些元件以 unix socket 互連，
+而 socket 若落在 virtiofs 掛載區，daemon 直接 `start` 容器時會踩到殘留檔，
+出現「容器 `Up`、HTTP 卻持續 502」的狀況——`restart: always` 對此無能為力，
+因為容器從頭到尾都是活的，壞掉的是它裡面的連線。
+
+現行設定已把會出事的三段連線全部移出掛載區（見〈[macOS bind mount 的限制與因應](#macos-bind-mount-的限制與因應)〉），
+因此 daemon 重啟後 GitLab 可完全自行恢復。若日後仍遇到啟動後持續 502，
+依序檢查這三處即可定位：
+
+| 檢查點 | 指令 | 正常表現 |
+| --- | --- | --- |
+| 元件是否反覆重啟 | `docker exec gitlab gitlab-ctl status` | 各服務存活秒數持續增長，不會反覆歸零 |
+| Workhorse→Rails | `docker exec gitlab tail /var/log/gitlab/gitlab-workhorse/current` | 無 `connect: operation not supported` |
+| Redis／PostgreSQL | `docker exec gitlab tail /var/log/gitlab/redis/current` | 無 `bind: Operation not supported` |
+
+真的卡住時，走一次完整流程讓 `run.sh` 的 socket 清理有機會執行：
+
+```bash
+cd gitlab && ./run.sh stop && ./run.sh
+```
+
+### 查看 log
+
+Harbor 不再有集中式的 `harbor/docker/data/log/*.log`（該目錄下的既有檔案為改版前的殘留，
+不再更新）。改用 Docker 原生方式：
+
+```bash
+docker logs harbor-core --tail 50     # 單一容器
+docker logs -f gitlab                 # 跟隨
+cd harbor && ./run.sh logs            # 該服務全部容器
+```
+
+### 手動停用服務
+
+`docker stop` 與 `docker kill` 都會被 daemon 記為「使用者主動停止」，
+所以容器**當下不會**被 restart policy 拉回；但 `always` 在 daemon 重啟時會忽略這個標記，
+把容器一併恢復——這正是 `always` 與 `unless-stopped` 的唯一差別，也是本專案選 `always` 的理由：
+只要曾經手動停過一次，`unless-stopped` 的容器就再也不會在重開機時自己回來。
+
+因此要長期停用某個服務，請用 `run.sh stop`（等同 `docker compose down`），
+容器被移除後就完全不受 restart policy 影響：
+
+```bash
+cd harbor && ./run.sh stop
+```
+
+> 同理，`docker kill` 無法用來測試崩潰自愈——它會被視為手動停止。
+> 要模擬真正的意外退出，請從容器**內部**把主行程結束掉：
+>
+> ```bash
+> docker exec harbor-core kill -TERM 1
+> sleep 15   # 留時間讓 daemon 重建容器，立刻查會看到舊值
+> docker inspect -f '{{.State.Status}} {{.RestartCount}}' harbor-core   # RestartCount 應遞增
+> ```
+>
+> 若某個容器對此沒有反應，多半是它的 PID 1 忽略 `SIGTERM`（PID 1 不套用預設訊號處置，
+> 未自行註冊 handler 的行程收到 `SIGTERM` 不會結束）。改送 `KILL` 即可：
+> `docker exec <容器> kill -KILL 1`。
 
 ---
 
@@ -586,12 +639,8 @@ v2.11.0 直上 v2.15.2，未逐版停留）。但**跨過的每一版都可能�
   docker exec harbor-db reindexdb --all --username postgres
   ```
 
-升級期間先卸載 watchdog，避免它在流程中途把服務拉起來：
-
-```bash
-launchctl unload ~/Library/LaunchAgents/com.chen.harbor-watchdog.plist   # 升級前
-launchctl load ~/Library/LaunchAgents/com.chen.harbor-watchdog.plist     # 升級後
-```
+升級期間請用 `./run.sh stop`（`docker compose down`）停用服務。容器被移除後不受
+`restart: always` 影響，不會在流程中途被 daemon 拉回；升級完成後再 `./run.sh` 啟動。
 
 ## 授權
 

@@ -1,5 +1,9 @@
 # GitLab / Harbor 開機自動啟動
 
+> **注意**：本文所述的 LaunchAgent 機制（`boot/`、`install-all.sh`、watchdog 巡檢）
+> 已於 `refactor/native-docker-restart` 全數移除，改用 Docker Desktop 登入自啟搭配
+> `restart: always`。本文僅保留為歷史記錄，其中的指令不應再執行。
+
 ## Context（背景）
 
 使用者希望「電腦重開機後，GitLab 與 Harbor 自動啟動」。
