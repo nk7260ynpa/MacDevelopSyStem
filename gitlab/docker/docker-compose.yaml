@@ -4,9 +4,8 @@
 #   - 8080 -> 80（HTTP）
 #   - 2222 -> 22（SSH，避免與 macOS 本機 sshd 衝突）
 #
-# 資料持久化：使用 bind mount 至 ./data/{config,data,logs}（Docker 專屬），
+# 資料持久化：使用 bind mount 至 ./data/{config,data,logs}，
 # 由 ../run.sh 啟動前確保目錄已建立。
-# K8s 方案有自己獨立的 k8s/data，兩種部署不共用儲存。
 #
 # name 必須明確指定：不指定時 Compose 會以所在目錄名（docker）作為專案名，
 # 而其他專案的 compose 檔同樣放在各自的 docker/ 目錄，會被判定為同一專案，
@@ -44,7 +43,7 @@ services:
         letsencrypt['enable'] = false
         # 關閉 Prometheus 監控以節省資源（如需可移除此行）
         prometheus_monitoring['enable'] = false
-        # --- 資源瘦身（開發/備份取向，非生產規格；比照 k8s 版 02-deployment.yaml）---
+        # --- 資源瘦身（開發/備份取向，非生產規格）---
         puma['worker_processes'] = 0          # 單進程模式，記憶體最低
         puma['min_threads'] = 1
         puma['max_threads'] = 4
