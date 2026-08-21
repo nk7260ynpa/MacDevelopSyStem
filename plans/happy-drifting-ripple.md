@@ -85,20 +85,21 @@ README 共 651 行，K8s 相關內容涵蓋三個完整章節與散落各處的�
 | L396-436 | `### 透過 Kubernetes`（Harbor 完整章節） |
 
 刪除目錄樹分支時注意樹狀連接線：`gitlab/` 與 `harbor/` 底下 `docker/` 將成為最後一項，
-`├── docker/` 需改為 `└── docker/`，其子項前導線由 `│   ` 改為 `    `。
+`├── docker/` 需改為 `└── docker/`，其子項前導線由 `│   ` 改為 `    `。兩處 `data/` 的註解
+「Docker 專屬持久化資料」在無 K8s 可對比後，一併簡化為「持久化資料」。
 
 **就地改寫**
 
 | 位置 | 改法 |
 | --- | --- |
-| L16-17 | 狀態欄「已支援（Docker Compose、K8s）」→「已支援（Docker Compose）」 |
+| L14、L16-18 | 表頭與狀態欄移除方案限定詞：「版本（Docker Compose 方案）」→「版本」、「已支援（Docker Compose、K8s）」→「已支援」 |
 | L82-109 `### 資料持久化設計` | 刪掉表格的「K8s 方案」欄與 GitLab／Harbor 兩條 K8s 條列；blockquote 只保留「舊版共用資料夾已停用」該條 |
 | L129 | 「GitLab 提供兩種互斥的部署方案，請依需求二擇一啟動（兩者皆使用 8080 / 2222 系列 port）」→ 改為單一 Docker Compose 方案的敘述 |
 | L165 | 移除「；K8s 方案改用動態 PVC，資料不落在本機資料夾」 |
 | L169 | 「並比照 K8s 版以單進程 Puma 運行」→ 移除「比照 K8s 版」 |
-| L350 | 「與 GitLab 一樣提供 Docker Compose 與 K8s 兩種方案」→ 改為僅 Docker Compose |
+| L349-350 | 「與 GitLab 一樣提供 Docker Compose 與 K8s 兩種方案」→ 改為僅 Docker Compose |
 | L381 | 移除「；K8s 方案另有獨立的 `harbor/k8s/data`」 |
-| L440 | 「Harbor port 8081 / 30081 已刻意錯開 GitLab 的 8080 / 30080」→ 移除 NodePort 30081／30080 |
+| L440-441 | 「Harbor port 8081 / 30081 已刻意錯開 GitLab 的 8080 / 30080」→ 移除 NodePort 30081／30080，並重新斷行 |
 
 `### 透過 Docker Compose` 這層標題在只剩單一方案後已無區分作用，且與前一句導語重複，
 故一併移除；GitLab 底下的 `#### macOS bind mount 的限制與因應` 相應提升為 H3。標題文字未變，
@@ -126,19 +127,25 @@ README 內無指向 K8s 章節的錨點連結（`](#…)` 僅三處，皆與 K8s
 
 ## 驗證
 
-1. **殘留檢查**（應僅剩 `gitlab_kas` 那行與 `plans/drifting-mapping-unicorn.md`）：
+1. **殘留檢查**：只掃版控檔（未版控的執行期資料如 `gitlab/docker/data/` 會產生大量雜訊）。
+   除 `plans/` 下的歷史紀錄與本檔外，應僅剩 `gitlab/docker/docker-compose.yaml` 的
+   `gitlab_kas` 那行。
 
    ```bash
-   grep -rn -i -E 'k8s|kubernetes|kubectl|minikube' . --exclude-dir=.git --exclude-dir=plans
+   git ls-files -z | xargs -0 grep -n -i -E 'k8s|kubernetes|kubectl|minikube'
    git ls-files | grep -i k8s        # 應無輸出
    ```
 
 2. **腳本語法**：
 
    ```bash
-   bash -n gitlab/run.sh harbor/run.sh gitlab-runner/run.sh harbor/docker/build.sh
-   docker compose -f gitlab/docker/docker-compose.yaml config -q
-   docker compose -f harbor/docker/docker-compose.yaml config -q
+   # bash -n 只會檢查第一個參數，其餘會被當成位置參數，故須逐檔執行
+   for f in {gitlab,harbor,gitlab-runner}/run.sh {gitlab,harbor,gitlab-runner}/docker/build.sh; do
+     bash -n "${f}" || echo "FAIL: ${f}"
+   done
+   for c in gitlab harbor gitlab-runner; do
+     docker compose -f "${c}/docker/docker-compose.yaml" config -q
+   done
    ```
 
 3. **服務現況**（不重啟）：

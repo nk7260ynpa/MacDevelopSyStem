@@ -185,7 +185,7 @@ GitLab Runner 為 GitLab CI/CD 的任務執行器。本方案以 Docker Compose 
 job 容器（sibling containers），無需 docker-in-docker。註冊採用 GitLab 16.0 以後的
 **認證權杖（authentication token，`glrt-` 開頭）**流程。
 
-> 前置：GitLab（Docker Compose 方案）已啟動且可於 <http://localhost:8080> 存取。
+> 前置：GitLab 已啟動且可於 <http://localhost:8080> 存取。
 
 ### 一、建立 Runner 取得認證權杖
 
@@ -441,11 +441,11 @@ cd harbor && ./run.sh stop
 各工具皆預期提供 `run.sh` 作為啟動入口，使用方式如下：
 
 ```bash
-# 啟動 GitLab（Docker Compose 方案）
+# 啟動 GitLab
 cd gitlab
 ./run.sh
 
-# 啟動 Harbor（Docker Compose 方案，首次須先 ./docker/build.sh）
+# 啟動 Harbor（首次須先 ./docker/build.sh）
 cd harbor
 ./run.sh
 
