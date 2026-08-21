@@ -8,14 +8,14 @@
 #   ./run.sh stop      # 停止 GitLab
 #   ./run.sh status    # 查看狀態
 #
-# 採用 Docker Compose 方案；K8s 方案請改用 ./k8s/apply.sh。
+# 採用 Docker Compose 方案，設定位於 ./docker/。
 
 set -euo pipefail
 
 readonly SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 readonly DOCKER_DIR="${SCRIPT_DIR}/docker"
 
-# Docker 專屬持久化資料夾（與 K8s 的 k8s/data 各自獨立，不共用）。
+# 持久化資料夾，以 bind mount 掛入容器。
 mkdir -p "${DOCKER_DIR}/data"/{config,logs,data}
 
 #######################################

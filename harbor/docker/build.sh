@@ -18,7 +18,7 @@ set -euo pipefail
 
 readonly SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 readonly HARBOR_VERSION="v2.15.2"
-# Docker 專屬持久化資料夾（與 K8s 的 k8s/data 各自獨立，不共用）。
+# 持久化資料夾，以 bind mount 掛入各 service。
 readonly DATA_DIR="${SCRIPT_DIR}/data"
 
 cd "${SCRIPT_DIR}"

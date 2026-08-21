@@ -8,7 +8,7 @@
 #   ./run.sh stop      # 停止 Harbor
 #   ./run.sh status    # 查看狀態
 #
-# 採用 Docker Compose 方案；K8s 方案請改用 ./k8s/apply.sh。
+# 採用 Docker Compose 方案，設定位於 ./docker/。
 # 首次執行前必須先跑 ./docker/build.sh 以拉取 image 並產生各 service 設定。
 
 set -euo pipefail
