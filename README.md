@@ -11,11 +11,11 @@
 
 ## 預定支援的工具
 
-| 工具 | 用途 | 版本（Docker Compose 方案） | 狀態 |
+| 工具 | 用途 | 版本 | 狀態 |
 | --- | --- | --- | --- |
-| GitLab | 自架 Git 程式碼托管與 CI/CD | `19.2.4-ce.0` | 已支援（Docker Compose） |
-| Harbor | 私有 Container Registry | `v2.15.2` | 已支援（Docker Compose） |
-| GitLab Runner | GitLab CI/CD 任務執行器（docker executor） | `v19.2.2` | 已支援（Docker Compose） |
+| GitLab | 自架 Git 程式碼托管與 CI/CD | `19.2.4-ce.0` | 已支援 |
+| Harbor | 私有 Container Registry | `v2.15.2` | 已支援 |
+| GitLab Runner | GitLab CI/CD 任務執行器（docker executor） | `v19.2.2` | 已支援 |
 | （後續擴充） | 視需求新增，例如 Jenkins、Nexus、MinIO 等 | — | — |
 
 各服務的映像版本一律**釘選**，不使用浮動的 `:latest`。GitLab 與 Runner 釘選於各自的
@@ -70,7 +70,7 @@ MacDevelopSyStem/
 - 以 bind mount 直接掛載各自的 `docker/data`，資料落在 macOS 本機、可直接備份與遷移。
 - 各本機 `data` 資料夾以 `.keep` 納入版控，實際內容由 `.gitignore` 排除。
 
-> 限制與注意事項：
+> 注意事項：
 >
 > - 舊版共用資料夾 `gitlab/git_data/`、`harbor/harbor_data/` 已停用並由 `.gitignore` 整夾忽略，
 >   確認無需保留後可手動刪除。
@@ -88,8 +88,6 @@ MacDevelopSyStem/
 ## GitLab 部署
 
 GitLab 以 Docker Compose 部署，使用 8080（HTTP）與 2222（SSH）兩個 port。
-
-### 透過 Docker Compose
 
 啟動：
 
@@ -131,7 +129,7 @@ cd gitlab/docker
 > Registry（改用 Harbor）／KAS／Prometheus 監控，常駐約 2.5–3 GB。適合輕量備份倉庫用途；
 > 屬開發取向、非生產規格。
 
-#### macOS bind mount 的限制與因應
+### macOS bind mount 的限制與因應
 
 GitLab 的資料以 bind mount 掛到 `gitlab/docker/data`，而 macOS 上 Docker Desktop
 採 virtiofs 分享目錄，對 unix socket 檔案有三項限制：
@@ -258,8 +256,6 @@ cd ..
 Harbor 為私有 Container Registry，包含 8 個 service（registry / registryctl /
 postgresql / redis / core / portal / jobservice / proxy），與 GitLab 一樣以
 Docker Compose 部署，版本固定 `v2.15.2`。
-
-### 透過 Docker Compose
 
 首次啟動前必須先拉 image 並產生各 service 設定：
 

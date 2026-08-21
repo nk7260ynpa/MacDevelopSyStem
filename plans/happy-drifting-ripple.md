@@ -5,7 +5,7 @@
 本 repo 目前為 GitLab 與 Harbor 各自維護兩套互斥的部署方案：Docker Compose 與 Kubernetes
 原生 manifests。K8s 方案的版本已停止跟進（manifest 仍停在 Harbor `v2.11.0` 與
 `gitlab-ce:latest`，與 Docker 方案的 `v2.15.2`／`19.2.4-ce.0` 不同步），實際維護成本落在
-兩份不同步的設定與近 90 行的 README 說明上。
+兩份不同步的設定與橫跨三個章節的 README 說明上。
 
 Notion 任務〈移除k8s 相關檔案〉（`Group: MacDevelopSyStem`）指定：
 
@@ -42,7 +42,7 @@ rm -rf harbor/k8s          # 清掉未版控的空 data 子目錄
 ```
 
 - `gitlab/k8s/`：6 檔（`00-namespace` / `01-pvc` / `02-deployment` / `03-service`、`apply.sh`、`delete.sh`）
-- `harbor/k8s/`：19 個版控檔（含 `pv.template.yaml`、`data/.keep`）＋未版控的空目錄
+- `harbor/k8s/`：18 個版控檔（含 `pv.template.yaml`、`data/.keep`）＋未版控的空目錄
   `data/{config,database,job_logs,redis,registry}`
 
 `.gitignore`：
@@ -71,7 +71,7 @@ rm -rf harbor/k8s          # 清掉未版控的空 data 子目錄
 
 ### 步驟 3：改寫 README.md
 
-README 共 651 行，K8s 內容約 90 行。改動分兩類：
+README 共 651 行，K8s 相關內容涵蓋三個完整章節與散落各處的行內敘述。改動分兩類：
 
 **整段刪除**
 
@@ -93,16 +93,19 @@ README 共 651 行，K8s 內容約 90 行。改動分兩類：
 | --- | --- |
 | L16-17 | 狀態欄「已支援（Docker Compose、K8s）」→「已支援（Docker Compose）」 |
 | L82-109 `### 資料持久化設計` | 刪掉表格的「K8s 方案」欄與 GitLab／Harbor 兩條 K8s 條列；blockquote 只保留「舊版共用資料夾已停用」該條 |
-| L130 | 「GitLab 提供兩種互斥的部署方案，請依需求二擇一啟動（兩者皆使用 8080 / 2222 系列 port）」→ 改為單一 Docker Compose 方案的敘述 |
+| L129 | 「GitLab 提供兩種互斥的部署方案，請依需求二擇一啟動（兩者皆使用 8080 / 2222 系列 port）」→ 改為單一 Docker Compose 方案的敘述 |
 | L165 | 移除「；K8s 方案改用動態 PVC，資料不落在本機資料夾」 |
 | L169 | 「並比照 K8s 版以單進程 Puma 運行」→ 移除「比照 K8s 版」 |
 | L350 | 「與 GitLab 一樣提供 Docker Compose 與 K8s 兩種方案」→ 改為僅 Docker Compose |
 | L381 | 移除「；K8s 方案另有獨立的 `harbor/k8s/data`」 |
 | L440 | 「Harbor port 8081 / 30081 已刻意錯開 GitLab 的 8080 / 30080」→ 移除 NodePort 30081／30080 |
 
-`### 透過 Docker Compose` 這層標題**保留**，維持 `## GitLab 部署` / `## Harbor 部署` 的既有
-層級結構，避免不必要的大幅重排。README 內無指向 K8s 章節的錨點連結（`](#…)` 僅三處，皆與
-K8s 無關），不需修正交叉連結。
+`### 透過 Docker Compose` 這層標題在只剩單一方案後已無區分作用，且與前一句導語重複，
+故一併移除；GitLab 底下的 `#### macOS bind mount 的限制與因應` 相應提升為 H3。標題文字未變，
+錨點 `#macos-bind-mount-的限制與因應` 仍可解析。「預定支援的工具」表格的「（Docker Compose
+方案）」「（Docker Compose）」限定詞、以及僅剩一條的「限制與注意事項」標題亦一併收斂。
+
+README 內無指向 K8s 章節的錨點連結（`](#…)` 僅三處，皆與 K8s 無關），不需修正交叉連結。
 
 ### 步驟 4：計畫紀錄
 
@@ -110,7 +113,7 @@ K8s 無關），不需修正交叉連結。
 `plans/drifting-mapping-unicorn.md:27-28` 提及 `gitlab/k8s/`、`harbor/k8s/` 的敘述是當時的
 事實紀錄，**不回頭改寫**。
 
-### Commit 拆解
+## Commit 拆解
 
 依約定式提交（繁體中文，50/72）：
 
@@ -149,7 +152,7 @@ K8s 無關），不需修正交叉連結。
 4. **verify-agent 檢查迴圈**：把變更檔案清單與 `git diff main..HEAD` 交給 verify-agent，
    針對正確性、Shell／Markdown 風格、文件一致性回報；最多 3 輪。
 
-### 部署決策
+## 部署決策
 
 `repo_detect.sh` 對本 repo 回報 `deploy_cmd: null`（根目錄無 `run.sh`，部署入口在各服務
 子目錄）。本次改動**只刪除 manifest 與修改註解／文件，未觸及任何 Docker Compose 執行邏輯或
