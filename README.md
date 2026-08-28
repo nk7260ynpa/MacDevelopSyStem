@@ -126,8 +126,9 @@ cd gitlab/docker
 > 首次啟動 GitLab 需 3–5 分鐘完成自我初始化，期間 `docker ps` 會顯示 `health: starting`，請耐心等待。
 
 > 資源設定（最小化）：已設容器記憶體上限 4G，並以單進程 Puma 運行、關閉內建
-> Registry（改用 Harbor）／KAS／Prometheus 監控，常駐約 2.5–3 GB。適合輕量備份倉庫用途；
-> 屬開發取向、非生產規格。
+> Registry（改用 Harbor）／KAS／Prometheus 監控，實測常駐約 3–3.3 GB（含 Gitaly
+> `runtime_dir` 的 tmpfs 約 130 MB，該用量計入本容器的 cgroup）。適合輕量備份倉庫
+> 用途；屬開發取向、非生產規格。
 
 ### macOS bind mount 的限制與因應
 
@@ -447,13 +448,16 @@ GitLab 的自癒比 Harbor 多一層：容器被拉起只是第一步，容器**
 | --- | --- | --- |
 | 元件是否反覆重啟 | `docker exec gitlab gitlab-ctl status` | 各服務存活秒數持續增長，不會反覆歸零 |
 | 掛載區是否又有 socket | `find gitlab/docker/data/data -type s` | 無輸出 |
-| Workhorse 自身 socket | `docker exec gitlab grep -ci 'operation not supported' /var/log/gitlab/gitlab-workhorse/current \|\| true` | `0` |
-| Gitaly 自身 socket | `docker exec gitlab grep -ci 'operation not supported' /var/log/gitlab/gitaly/current \|\| true` | `0` |
-| Redis | `docker exec gitlab grep -ci 'operation not supported' /var/log/gitlab/redis/current \|\| true` | `0` |
-| PostgreSQL | `docker exec gitlab grep -ci 'invalid argument' /var/log/gitlab/postgresql/current \|\| true` | `0` |
+| Workhorse 自身 socket | `docker exec gitlab grep -c 'shutting down: remove' /var/log/gitlab/gitlab-workhorse/current \|\| true` | `0` |
+| Gitaly 自身 socket | `docker exec gitlab grep -c 'unable to start the bootstrap' /var/log/gitlab/gitaly/current \|\| true` | `0` |
+| Redis | `docker exec gitlab grep -c 'Failed opening Unix socket' /var/log/gitlab/redis/current \|\| true` | `0` |
+| PostgreSQL | `docker exec gitlab grep -c 'could not set permissions' /var/log/gitlab/postgresql/current \|\| true` | `0` |
 
-`grep -c` 在計數為 0 時 exit code 是 `1`，貼進 `set -e` 的腳本會被誤判成失敗，
-故上表補了 `|| true`。
+兩個細節：`grep -c` 在計數為 0 時 exit code 是 `1`，貼進 `set -e` 的腳本會被誤判成
+失敗，故上表補了 `|| true`。另外**別用寬鬆的 `operation not supported` 當關鍵字**
+——gitaly 每次正常啟動都會記一筆良性的 `Unable to set SO_REUSEPORT`（unix socket
+不支援該選項，只影響零停機升級），拿它當判準會恆為 `1`。上表改用各元件實際的
+失敗訊息。
 
 真的卡住時，走一次完整流程讓 `run.sh` 的 socket 清理有機會執行：
 
