@@ -74,16 +74,35 @@ services:
         # 值與內建預設相同，僅指定行為本身有意義。
         puma['socket'] = ''
         gitlab_workhorse['auth_backend'] = 'http://localhost:8080'
+        # Workhorse 自己對外 listen 的 socket 同樣搬進 tmpfs。2026-08-22 起連續 6.5 天
+        # 全站 502 就源於此：daemon 直接 start 容器（不走 ../run.sh）時，上一輪殘留在
+        # virtiofs 上的 socket 無法 unlink，workhorse 以「shutting down: remove ...:
+        # operation not supported」每秒崩潰一次，nginx 沒有 upstream。容器主行程
+        # runsvdir 從頭到尾都活著，restart: always 完全不介入——這正是「容器 Up、
+        # 對外卻 502」的成因。
+        # 只需 sockets_directory 這一個開關：listen_addr 未指定時，omnibus 會以
+        # File.join(sockets_directory, 'socket') 自動補上（libraries/gitlab_workhorse.rb
+        # :27,35），nginx upstream、gitlab-shell 與 gitaly 的 gitlab.url 都由同一組值
+        # 衍生，reconfigure 時全數自動跟上。反之若只改 listen_addr，sockets_directory
+        # 會維持 nil，Chef 就不會去建那個目錄。
+        gitlab_workhorse['sockets_directory'] = '/run/gitlab-workhorse'
         registry['enable'] = false            # 已有獨立 Harbor，關閉內建 registry
         gitlab_kas['enable'] = false          # 關閉 K8s Agent Server
-    # PostgreSQL 與 Redis 的 unix socket 目錄（見上方 GITLAB_OMNIBUS_CONFIG 說明）；
-    # 置於容器內 tmpfs，避開 virtiofs 對 socket 檔 chmod/unlink/bind 的限制。
-    # uid/gid 996、997 分別為 image 內建的 gitlab-psql 與 gitlab-redis 帳號；
-    # mode 0755 讓以 git 執行的 Rails、Sidekiq、Workhorse 得以進入目錄連線
-    # （socket 本身由 omnibus 以 unixsocketperm 777 建立）。
+    # GitLab 元件互連用的 unix socket 一律不落在 bind mount：macOS 的 virtiofs 不支援
+    # 對 socket 檔 unlink／chmod，只要上一輪留下殘留檔，元件就永遠起不來。tmpfs 每次
+    # 容器 start 都是全新的，連 daemon 繞過 ../run.sh 直接 start 也保證乾淨，
+    # restart: always 對 GitLab 才真正成立。
+    # uid/gid 皆為 image 內建帳號：gitlab-psql 996、gitlab-redis 997、git 998、
+    # gitlab-www 999。mode 一律對齊 omnibus 自己建立該目錄時的權限，reconfigure 才會
+    # 判定為已就緒而不去動它（也就不會多送一次 notifies :restart）。
     tmpfs:
+      # PostgreSQL／Redis：socket 由 omnibus 以 unixsocketperm 777 建立，目錄給 0755
+      # 讓以 git 執行的 Rails、Sidekiq、Workhorse 得以進入目錄連線。
       - /run/postgresql:uid=996,gid=996,mode=0755
       - /run/gitlab-redis:uid=997,gid=997,mode=0755
+      # Workhorse：連線方是以 gitlab-www 執行的 nginx，故 group 給 gitlab-www、
+      # mode 0750，與 recipes/gitlab-workhorse.rb:35-43 建立此目錄時完全一致。
+      - /run/gitlab-workhorse:uid=998,gid=999,mode=0750
     volumes:
       - ./data/config:/etc/gitlab
       - ./data/logs:/var/log/gitlab
