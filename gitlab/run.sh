@@ -27,18 +27,21 @@ mkdir -p "${DOCKER_DIR}/data"/{config,logs,data}
 #      而失敗（Operation not supported）。
 #   2. 無法對 socket 檔 chmod，建立後設權限的元件會啟動失敗（EINVAL）。
 #   3. 無法保留 setgid 位元，reconfigure 檢查 repositories 需為 2770 會失敗。
-# 前兩項對 PostgreSQL、Redis、Rails(Puma) 已由 docker-compose.yaml 從根本解掉
-# （前兩者的 socket 移到 tmpfs，Rails 則停用 unix socket 改走 TCP），不再依賴
-# 本函式；留在掛載區的只剩 Gitaly 與 Workhorse 的 socket。啟動前先行清理與
-# 補正，可避免容器陷入無限重啟。
+# 前兩項已由 docker-compose.yaml 從根本解掉：PostgreSQL、Redis、Workhorse 與
+# Gitaly 的 socket 全部移到 tmpfs，Rails 則停用 unix socket 改走 TCP，掛載區
+# 已不再產生任何 socket。第 3 項無法從設定面解決，仍須靠本函式補正。
 #
-# 僅在容器「未運行」時才動作。GitLab 各元件之間是靠這些 unix socket 互連
-# （Workhorse→Rails、Rails→Gitaly 等），容器運行中時它們全是活的，而
-# find -type s 只看檔案型別，分不出活的與殘留的。誤刪活 socket 的後果無法
-# 自癒：listener 持有的是已開啟的 inode，刪掉路徑名既不會通知它、也不會讓
-# 它重建，但連線方是以路徑名 connect；加上 docker compose up -d 對設定未變
-# 的運行中容器是 no-op（不會重啟），沒有任何人會把 socket 補回來，於是既有
-# 連線照舊而新連線全數失敗（對外表現為 502）。故偵測到運行中即整段跳過。
+# 因此 socket 清理已降級為防呆，保留的理由有三：清掉搬移前留下的孤兒檔；
+# 設定被回滾時它是唯一兜底；以及日後若有元件把 socket 放回掛載區能及早發現。
+#
+# 「僅在容器未運行時才動作」這道 guard 同樣保留。設定一旦被回滾，掛載區就會
+# 重新出現互連用的 socket（Workhorse→Rails、Rails→Gitaly 等），容器運行中時
+# 它們全是活的，而 find -type s 只看檔案型別，分不出活的與殘留的。誤刪活
+# socket 的後果無法自癒：listener 持有的是已開啟的 inode，刪掉路徑名既不會
+# 通知它、也不會讓它重建，但連線方是以路徑名 connect；加上 docker compose
+# up -d 對設定未變的運行中容器是 no-op（不會重啟），沒有任何人會把 socket
+# 補回來，於是既有連線照舊而新連線全數失敗（對外表現為 502）。故偵測到運行
+# 中即整段跳過。
 # Globals:
 #   DOCKER_DIR
 # Arguments:
