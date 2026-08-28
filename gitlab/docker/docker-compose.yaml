@@ -86,6 +86,19 @@ services:
         # 衍生，reconfigure 時全數自動跟上。反之若只改 listen_addr，sockets_directory
         # 會維持 nil，Chef 就不會去建那個目錄。
         gitlab_workhorse['sockets_directory'] = '/run/gitlab-workhorse'
+        # Gitaly 同理，症狀是「unable to start the bootstrap: unlinkat ...:
+        # operation not supported」。它靠 runit 每秒重試偶爾能撞過去（單一輪替日誌
+        # 最高 45288 次失敗），先前因此被誤記為「實測可自行重建」——那是運氣不是設計。
+        # gitaly['configuration'] 是 hash，這裡只給部分 key 不會蓋掉套件預設值：
+        # 設定經 node.consume_attributes 寫進 normal 層（package/recipes/config.rb:39），
+        # 與 attributes/default.rb 的 default 層由 Chef 的 hash_only_merge 遞迴合併，
+        # 未指定的 prometheus_listen_addr、logging、storage、gitlab.secret_file 一律
+        # 保留；auth.token 由 libraries/gitaly.rb:38-40 以 ||= 補上。Rails 端的
+        # gitaly_address 也由 socket_path 推導後寫進 gitlab.yml 的 storages:。
+        gitaly['configuration'] = {
+          socket_path: '/run/gitaly/gitaly.socket',
+          runtime_dir: '/run/gitaly-runtime',
+        }
         registry['enable'] = false            # 已有獨立 Harbor，關閉內建 registry
         gitlab_kas['enable'] = false          # 關閉 K8s Agent Server
     # GitLab 元件互連用的 unix socket 一律不落在 bind mount：macOS 的 virtiofs 不支援
@@ -103,6 +116,20 @@ services:
       # Workhorse：連線方是以 gitlab-www 執行的 nginx，故 group 給 gitlab-www、
       # mode 0750，與 recipes/gitlab-workhorse.rb:35-43 建立此目錄時完全一致。
       - /run/gitlab-workhorse:uid=998,gid=999,mode=0750
+      # Gitaly socket：連線方只有以 git 執行的 Rails／Sidekiq／gitlab-shell，0700 即可。
+      # 這個目錄沒有對應的 Chef directory 資源，權限完全由這一行決定。
+      - /run/gitaly:uid=998,gid=998,mode=0700
+      # Gitaly runtime_dir：與上面的 socket 目錄分開掛，因為兩者需求相反。
+      # 1. 必須加 exec。gitaly 每次啟動會把約 129 MB 的輔助執行檔（gitaly-hooks、
+      #    gitaly-ssh、gitaly-git-* 等，mode 0500）解壓到這裡，之後每個 git 操作都要
+      #    從這裡 exec（GIT_EXEC_PATH 與 core.hooksPath 都指向它）。docker 的 tmpfs
+      #    預設帶 noexec，不明確加 exec 會讓所有 git 操作直接掛掉。
+      # 2. 必須給 size。tmpfs 不指定時上限是主機記憶體的一半，而其佔用計入本容器的
+      #    4G cgroup。單一世代 129 MB、優雅重啟期間新舊並存約 260 MB，取 512m 留餘裕；
+      #    日後 gitaly 版本增加輔助執行檔時須同步調高。
+      # 順帶解掉兩件事：內部 socket（sock.d/intern）是掛載區最後一個 socket；
+      # 以及每次啟動不必再把 129 MB 寫穿 virtiofs。
+      - /run/gitaly-runtime:exec,size=512m,uid=998,gid=998,mode=0700
     volumes:
       - ./data/config:/etc/gitlab
       - ./data/logs:/var/log/gitlab
