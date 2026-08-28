@@ -152,7 +152,7 @@ GitLab 的資料以 bind mount 掛到 `gitlab/docker/data`，而 macOS 上 Docke
 | Redis | socket 目錄改掛容器內 tmpfs `/run/gitlab-redis` | `docker-compose.yaml` |
 | Rails（Puma） | 停用 unix socket，Workhorse 改連既有的 `tcp://127.0.0.1:8080` | `docker-compose.yaml` |
 | Workhorse | `sockets_directory` 改指向 tmpfs `/run/gitlab-workhorse` | `docker-compose.yaml` |
-| Gitaly | `socket_path` 改指向 tmpfs `/run/gitaly`，`runtime_dir` 改指向 `/run/gitaly-runtime` | `docker-compose.yaml` |
+| Gitaly | `socket_path` 改為 tmpfs 上的 `/run/gitaly/gitaly.socket`，`runtime_dir` 改指向 `/run/gitaly-runtime` | `docker-compose.yaml` |
 
 資料庫檔案、Redis 的 RDB、Git repositories 仍留在 `data/data`，持久化不受影響。
 
@@ -166,7 +166,7 @@ Workhorse 與 Gitaly 原本留在掛載區，理由是「實測可自行重建�
 - Gitaly 撞的是同一個限制（`unable to start the bootstrap: unlinkat ...:
   operation not supported`），單一輪替日誌最高 45,288 次失敗。它靠 runit 每秒重試
   偶爾能撞過去——**那是運氣，不是設計**，先前的「可自行重建」正是誤讀了這個現象。
-- 官方 image 的 `clean_stale_pids()` 救不了：它只刪 `*.pid` 與 `socket.?`，
+- 官方 image 的 `clean_stale_pids()` 救不了：它只刪 `pid`、`*.pid` 與 `socket.?`，
   `socket` 與 `gitaly.socket` 兩個檔名都不匹配。
 - 容器主行程 `runsvdir` 全程存活，`restart: always` 完全不介入；`run.sh` 的清理
   又只在容器未運行時執行，而 daemon 重啟根本不走 `run.sh`。三層機制同時失效。
@@ -176,8 +176,19 @@ Workhorse 與 Gitaly 原本留在掛載區，理由是「實測可自行重建�
 - **tmpfs 必須明確加 `exec`。** Docker 的 `tmpfs:` 預設帶 `noexec`，而 gitaly
   每次啟動會把約 129 MB 的輔助執行檔（`gitaly-hooks`、`gitaly-git-*` 等）解壓到
   `runtime_dir`，之後每個 git 操作都要從那裡 exec。漏了 `exec` 會讓 git 全掛。
-- **tmpfs 佔用計入容器的 4G cgroup 上限。** 故以 `size=512m` 限制；日後 gitaly
-  版本增加輔助執行檔時須同步調高。
+- **tmpfs 佔用計入容器的 4G cgroup 上限。** 五個 tmpfs 中只有 `/run/gitaly-runtime`
+  設了 `size=512m`（其餘只放 socket，用量可忽略）。這道上限是本次新引入的失效模式：
+  一旦寫滿，gitaly 解壓輔助執行檔會得到 `ENOSPC` 而起不來，日後 gitaly 版本增加
+  輔助執行檔時須同步調高。
+
+搬移後舊的 `data/data/gitaly/run/gitaly-<pid>/` 不會再被使用，但也不會被自動清除
+（`clean_stale_state()` 只刪 `-type s`）。確認服務正常後可一次性回收那約 129 MB：
+
+```bash
+cd gitlab && ./run.sh stop
+rm -rf docker/data/data/gitaly/run docker/data/data/gitlab-workhorse
+./run.sh
+```
 
 Rails 那一項的細節：GitLab 的 puma 本來就同時 bind unix socket 與
 `tcp://127.0.0.1:8080`，因此停用 unix bind 不減少任何能力。設定上
@@ -204,6 +215,11 @@ guard 一併保留：設定若被回滾，掛載區會重新出現互連用的�
 ```bash
 find gitlab/docker/data/data -type s         # 應無輸出（容器運行中也一樣）
 ```
+
+> 此不變式要等 `clean_stale_state()` 至少跑過一次才成立。套用上述設定變更時請走
+> `./run.sh stop && ./run.sh`——直接 `docker compose up -d` 雖然會 recreate 容器並
+> 讓新設定生效，卻會把搬移前的孤兒 socket 原封不動留在掛載區，之後檢查這條不變式
+> 就會得到假警報。
 
 有輸出就代表某個元件的 socket 又落回 virtiofs，回頭核對上表的設定。接著確認
 socket 確實建在 tmpfs、且 `runtime_dir` 沒有被加上 `noexec`：
@@ -431,9 +447,13 @@ GitLab 的自癒比 Harbor 多一層：容器被拉起只是第一步，容器**
 | --- | --- | --- |
 | 元件是否反覆重啟 | `docker exec gitlab gitlab-ctl status` | 各服務存活秒數持續增長，不會反覆歸零 |
 | 掛載區是否又有 socket | `find gitlab/docker/data/data -type s` | 無輸出 |
-| Workhorse 自身 socket | `docker exec gitlab grep -c 'operation not supported' /var/log/gitlab/gitlab-workhorse/current` | `0` |
-| Gitaly 自身 socket | `docker exec gitlab grep -c 'operation not supported' /var/log/gitlab/gitaly/current` | `0` |
-| Redis／PostgreSQL | `docker exec gitlab grep -c 'Operation not supported' /var/log/gitlab/redis/current` | `0` |
+| Workhorse 自身 socket | `docker exec gitlab grep -ci 'operation not supported' /var/log/gitlab/gitlab-workhorse/current \|\| true` | `0` |
+| Gitaly 自身 socket | `docker exec gitlab grep -ci 'operation not supported' /var/log/gitlab/gitaly/current \|\| true` | `0` |
+| Redis | `docker exec gitlab grep -ci 'operation not supported' /var/log/gitlab/redis/current \|\| true` | `0` |
+| PostgreSQL | `docker exec gitlab grep -ci 'invalid argument' /var/log/gitlab/postgresql/current \|\| true` | `0` |
+
+`grep -c` 在計數為 0 時 exit code 是 `1`，貼進 `set -e` 的腳本會被誤判成失敗，
+故上表補了 `|| true`。
 
 真的卡住時，走一次完整流程讓 `run.sh` 的 socket 清理有機會執行：
 

@@ -106,8 +106,10 @@ services:
     # 容器 start 都是全新的，連 daemon 繞過 ../run.sh 直接 start 也保證乾淨，
     # restart: always 對 GitLab 才真正成立。
     # uid/gid 皆為 image 內建帳號：gitlab-psql 996、gitlab-redis 997、git 998、
-    # gitlab-www 999。mode 一律對齊 omnibus 自己建立該目錄時的權限，reconfigure 才會
-    # 判定為已就緒而不去動它（也就不會多送一次 notifies :restart）。
+    # gitlab-www 999。凡有對應 Chef directory 資源的目錄，mode 都對齊 omnibus 自己
+    # 建立它時的權限，reconfigure 才會判定為已就緒而不去動它（也就不會多送一次
+    # notifies :restart）。唯一的例外是 /run/gitaly——它沒有對應資源，權限完全由
+    # 這裡決定，見下方註解。
     tmpfs:
       # PostgreSQL／Redis：socket 由 omnibus 以 unixsocketperm 777 建立，目錄給 0755
       # 讓以 git 執行的 Rails、Sidekiq、Workhorse 得以進入目錄連線。

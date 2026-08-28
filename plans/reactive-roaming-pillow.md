@@ -272,7 +272,7 @@ cd gitlab && ./run.sh stop && ./run.sh
 ```
 
 `./run.sh stop` 走不帶 `--remove-orphans` 的 `docker compose down`，並讓下一次
-`./run.sh` 的 `clean_stale_state()` 清掉兩個孤兒 socket。等 healthy（含 reconfigure
+`./run.sh` 的 `clean_stale_state()` 清掉那 3 個孤兒 socket。等 healthy（含 reconfigure
 約 3-5 分鐘）。
 
 ### C. 部署後實測
