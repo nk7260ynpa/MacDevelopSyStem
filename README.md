@@ -15,13 +15,15 @@
 | --- | --- | --- | --- |
 | GitLab | 自架 Git 程式碼托管與 CI/CD | `19.2.4-ce.0` | 已支援 |
 | Harbor | 私有 Container Registry | `v2.15.2` | 已支援 |
-| GitLab Runner | GitLab CI/CD 任務執行器（docker executor） | `v19.2.2` | 已支援 |
 | （後續擴充） | 視需求新增，例如 Jenkins、Nexus、MinIO 等 | — | — |
 
-各服務的映像版本一律**釘選**，不使用浮動的 `:latest`。GitLab 與 Runner 釘選於各自的
+各服務的映像版本一律**釘選**，不使用浮動的 `:latest`。GitLab 釘選於其
 `docker/Dockerfile`；Harbor 為多映像架構，實際生效的是 `docker/docker-compose.yaml`
 的 8 個 image tag 與 `docker/build.sh` 的 `HARBOR_VERSION`（`harbor/docker/Dockerfile`
 僅為佔位、不參與部署）。升級注意事項見「[版本升級](#版本升級)」。
+
+> **CI Runner**：本 repo 不提供 GitLab Runner。GitLab 本身可正常建立 CI/CD pipeline，
+> 但沒有 executor 時 job 會停在 pending——請由各 Group 自行建立並註冊所需的 Runner。
 
 ## 專案架構
 
@@ -38,23 +40,15 @@ MacDevelopSyStem/
 │       ├── docker-compose.yaml
 │       ├── .env.example
 │       └── data/          # 持久化資料（僅 .keep 納入版控）
-├── harbor/                # Harbor 部署設定
-│   ├── run.sh             # Docker Compose 啟動入口（up/logs/stop/status）
-│   └── docker/            # Docker Compose 方案
-│       ├── build.sh       # 拉 image + 用 prepare 產生各 service 設定
-│       ├── Dockerfile
-│       ├── docker-compose.yaml
-│       ├── harbor.yml     # Harbor 設定範本（供 prepare 讀取）
-│       ├── .env.example
-│       └── data/          # 持久化資料（僅 .keep 納入版控）
-└── gitlab-runner/         # GitLab Runner 部署設定（CI/CD 執行器）
-    ├── run.sh             # 入口：register/up/logs/stop/status
-    └── docker/            # Docker Compose 方案（docker executor）
-        ├── build.sh
+└── harbor/                # Harbor 部署設定
+    ├── run.sh             # Docker Compose 啟動入口（up/logs/stop/status）
+    └── docker/            # Docker Compose 方案
+        ├── build.sh       # 拉 image + 用 prepare 產生各 service 設定
         ├── Dockerfile
         ├── docker-compose.yaml
-        ├── .env.example   # CI_SERVER_URL / RUNNER_TOKEN 等
-        └── data/          # Runner 設定 config.toml（僅 .keep 納入版控）
+        ├── harbor.yml     # Harbor 設定範本（供 prepare 讀取）
+        ├── .env.example
+        └── data/          # 持久化資料（僅 .keep 納入版控）
 ```
 
 ### 資料持久化設計
@@ -64,7 +58,6 @@ MacDevelopSyStem/
 | 工具 | 資料位置 |
 | --- | --- |
 | GitLab | `gitlab/docker/data/` |
-| GitLab Runner | `gitlab-runner/docker/data/`（config.toml） |
 | Harbor | `harbor/docker/data/` |
 
 - 以 bind mount 直接掛載各自的 `docker/data`，資料落在 macOS 本機、可直接備份與遷移。
@@ -232,79 +225,6 @@ docker exec gitlab sh -c 'mount | grep -E "/run/(gitlab-workhorse|gitaly)"'
 
 ---
 
-## GitLab Runner 部署
-
-GitLab Runner 為 GitLab CI/CD 的任務執行器。本方案以 Docker Compose 部署單一 runner，採
-**docker executor**（每個 CI job 於獨立容器中執行），由 runner 透過主機 Docker daemon 啟動
-job 容器（sibling containers），無需 docker-in-docker。註冊採用 GitLab 16.0 以後的
-**認證權杖（authentication token，`glrt-` 開頭）**流程。
-
-> 前置：GitLab 已啟動且可於 <http://localhost:8080> 存取。
-
-### 一、建立 Runner 取得認證權杖
-
-於 GitLab 網頁建立 Runner，依需要的範圍擇一，取得 `glrt-` 開頭的認證權杖：
-
-- 實例層（需 admin）：**Admin Area → CI/CD → Runners → New instance runner**
-- 群組層：**群組 → Settings → CI/CD → Runners → New group runner**
-- 專案層：**專案 → Settings → CI/CD → Runners → New project runner**
-
-建立時可設定標籤（tags）、是否接受未帶標籤的 job 等；送出後頁面會顯示 `glrt-...` 權杖，請複製備用。
-
-### 二、填入設定
-
-```bash
-cd gitlab-runner/docker
-cp .env.example .env
-# 編輯 .env，將 RUNNER_TOKEN 改為剛剛取得的 glrt- 權杖
-```
-
-`.env` 重點欄位：
-
-| 變數 | 預設 | 說明 |
-| --- | --- | --- |
-| `CI_SERVER_URL` | `http://host.docker.internal:8080` | runner 與 job 容器連回主機 GitLab 的網址 |
-| `RUNNER_TOKEN` | `glrt-REPLACE_ME` | 認證權杖（必填） |
-| `RUNNER_DOCKER_IMAGE` | `alpine:latest` | job 未指定 image 時的預設映像 |
-| `RUNNER_DESCRIPTION` | `mac-local-docker-runner` | runner 描述 |
-
-> 為何用 `host.docker.internal`？GitLab 的 `external_url` 是 `http://localhost:8080`，但容器內的
-> `localhost` 指向容器自身。`host.docker.internal` 在 Docker Desktop 會解析到主機，故 runner
-> 連線、git clone 與 artifact／快取上傳皆走此網址連回主機上發佈的 8080 埠。
-
-### 三、建置、註冊與啟動
-
-```bash
-cd gitlab-runner/docker
-./build.sh               # 拉 gitlab-runner image 並建立本地 image
-
-cd ..
-./run.sh register        # 以 .env 的權杖註冊（設定寫入 docker/data/config.toml）
-./run.sh up              # 啟動 runner
-```
-
-其他操作：
-
-```bash
-./run.sh status          # 查看狀態
-./run.sh logs            # 跟隨 log
-./run.sh stop            # 停止 runner
-```
-
-註冊成功後，於 GitLab 的 Runners 頁面可看到此 runner 上線（綠點）。
-
-### 設計重點
-
-- **executor**：docker；runner 容器掛載主機 `/var/run/docker.sock`，由主機 Docker daemon 啟動
-  job 容器，無需 docker-in-docker。
-- **網路**：`--url` 與 `--clone-url` 皆設為 `host.docker.internal:8080`，並對 job／helper 容器注入
-  `host.docker.internal:host-gateway`，確保 polling、git clone 與 artifact／快取上傳都能連回主機 GitLab。
-- **設定持久化**：`docker/data/config.toml`（含權杖）以 bind mount 保存，已由 `.gitignore` 排除，
-  不納入版控。
-- **compose 專案名**：固定 `name: gitlab-runner`，避免與其他同放在 `docker/` 目錄的專案互相視為 orphan。
-
----
-
 ## Harbor 部署
 
 Harbor 為私有 Container Registry，包含 8 個 service（registry / registryctl /
@@ -361,7 +281,7 @@ Harbor port 8081 已刻意錯開 GitLab 的 8080，兩者可同時運行（記�
 
 ## 開機自動啟動與自動修復
 
-Harbor、GitLab、GitLab Runner 於主機重開機後自動恢復，意外掛掉也會自動重啟。
+Harbor 與 GitLab 於主機重開機後自動恢復，意外掛掉也會自動重啟。
 機制**完全依賴 Docker 內建能力**，不需要安裝任何常駐程式或排程工具。
 
 實測結果（2026-08-21，完整重啟 Docker Desktop 驗證，全程未執行任何救援指令）：
@@ -369,7 +289,6 @@ Harbor、GitLab、GitLab Runner 於主機重開機後自動恢復，意外掛掉
 | 服務 | 容器自動恢復 | 服務可用 |
 | --- | --- | --- |
 | Harbor（8 個容器） | ✅ | ✅ UI／API 皆 200，7 個 component 全 healthy |
-| GitLab Runner | ✅ | ✅ `gitlab-runner verify` 通過 |
 | GitLab | ✅ | ✅ 約 30 秒後 HTTP 200、healthcheck 轉 healthy |
 
 過程中 `nginx`（Harbor proxy）與 `harbor-jobservice` 因啟動競態各崩潰過
@@ -381,7 +300,7 @@ Harbor、GitLab、GitLab Runner 於主機重開機後自動恢復，意外掛掉
 | 要件 | 設定位置 | 作用 |
 | --- | --- | --- |
 | Docker Desktop 登入自啟 | Docker Desktop → Settings → General | 開機後拉起 Docker daemon |
-| `restart: always` | 三個服務的 `docker-compose.yaml` | daemon 就緒後恢復容器；容器內主行程一退出就重啟（不看 exit code） |
+| `restart: always` | 兩個服務的 `docker-compose.yaml` | daemon 就緒後恢復容器；容器內主行程一退出就重啟（不看 exit code） |
 
 > **前提**：Docker Desktop 須勾選 "Start Docker Desktop when you sign in"，
 > 否則重開機後 daemon 不會啟動，容器自然無從恢復。這是唯一需要手動確認的設定。
@@ -392,9 +311,9 @@ Harbor、GitLab、GitLab Runner 於主機重開機後自動恢復，意外掛掉
 # Docker Desktop 是否設為登入自啟（應為 true）
 grep AutoStart ~/Library/Group\ Containers/group.com.docker/settings-store.json
 
-# 三個服務的 restart policy（應全為 always）
+# 兩個服務的 restart policy（應全為 always）
 docker inspect -f '{{.Name}} {{.HostConfig.RestartPolicy.Name}}' \
-  gitlab gitlab-runner harbor-core
+  gitlab harbor-core
 ```
 
 ### 為什麼跨容器啟動依賴必須能靠 restart 自愈
@@ -517,10 +436,6 @@ cd gitlab
 # 啟動 Harbor（首次須先 ./docker/build.sh）
 cd harbor
 ./run.sh
-
-# 啟動 GitLab Runner（首次須先 ./docker/build.sh，並 ./run.sh register 註冊）
-cd gitlab-runner
-./run.sh up
 ```
 
 ## 版本升級
@@ -543,11 +458,6 @@ docker exec gitlab gitlab-rails runner \
 ```
 
 升級後同樣以上述指令確認收斂為 `0`（大版本升級後背景遷移可能持續數十分鐘）。
-
-### GitLab Runner
-
-Runner 版本**不得高於** GitLab 主體版本，故跟隨主體的次版本分支（如主體 19.2.x 則取
-`v19.2.2`）。`config.toml` 未釘選 `helper_image`，helper 會自動跟隨 Runner 版本，無需另外設定。
 
 ### Harbor
 

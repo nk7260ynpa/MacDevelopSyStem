@@ -35,8 +35,6 @@ docker-compose.override.yml
 # 持久化資料（僅保留 .keep）
 gitlab/docker/data/*
 !gitlab/docker/data/.keep
-gitlab-runner/docker/data/*
-!gitlab-runner/docker/data/.keep
 harbor/docker/data/*
 !harbor/docker/data/.keep
 
