@@ -126,8 +126,9 @@ cd gitlab/docker
 > 首次啟動 GitLab 需 3–5 分鐘完成自我初始化，期間 `docker ps` 會顯示 `health: starting`，請耐心等待。
 
 > 資源設定（最小化）：已設容器記憶體上限 4G，並以單進程 Puma 運行、關閉內建
-> Registry（改用 Harbor）／KAS／Prometheus 監控，常駐約 2.5–3 GB。適合輕量備份倉庫用途；
-> 屬開發取向、非生產規格。
+> Registry（改用 Harbor）／KAS／Prometheus 監控，實測常駐約 3–3.3 GB（含 Gitaly
+> `runtime_dir` 的 tmpfs 約 130 MB，該用量計入本容器的 cgroup）。適合輕量備份倉庫
+> 用途；屬開發取向、非生產規格。
 
 ### macOS bind mount 的限制與因應
 
@@ -144,16 +145,51 @@ GitLab 的資料以 bind mount 掛到 `gitlab/docker/data`，而 macOS 上 Docke
 容器是被 daemon 直接 `start` 的，不會經過 `run.sh`，前次殘留的 socket 檔沒被清掉，
 元件便無法在同一路徑上重建或連線，對外表現為持續 502。
 
-因應方式分兩類，**主要元件已從根本移出 virtiofs**，不再倚賴啟動前清理：
+**所有元件的 socket 都已從根本移出 virtiofs**，不再倚賴啟動前清理：
 
 | 元件 | 作法 | 設定位置 |
 | --- | --- | --- |
 | PostgreSQL | socket 目錄改掛容器內 tmpfs `/run/postgresql` | `docker-compose.yaml` |
 | Redis | socket 目錄改掛容器內 tmpfs `/run/gitlab-redis` | `docker-compose.yaml` |
 | Rails（Puma） | 停用 unix socket，Workhorse 改連既有的 `tcp://127.0.0.1:8080` | `docker-compose.yaml` |
-| Gitaly、Workhorse | socket 仍在掛載區，但實測可自行重建，由 `run.sh` 的清理兜底 | `run.sh` |
+| Workhorse | `sockets_directory` 改指向 tmpfs `/run/gitlab-workhorse` | `docker-compose.yaml` |
+| Gitaly | `socket_path` 改為 tmpfs 上的 `/run/gitaly/gitaly.socket`，`runtime_dir` 改指向 `/run/gitaly-runtime` | `docker-compose.yaml` |
 
-資料庫檔案、Redis 的 RDB 仍留在 `data/data`，持久化不受影響。
+資料庫檔案、Redis 的 RDB、Git repositories 仍留在 `data/data`，持久化不受影響。
+
+### 事故紀錄：Workhorse 與 Gitaly 為何最後才搬
+
+Workhorse 與 Gitaly 原本留在掛載區，理由是「實測可自行重建」。2026-08-22 11:42
+至 08-28 16:51 的連續 502（約 6.5 天）推翻了這個判斷：
+
+- Workhorse 以 `shutting down: remove ...: operation not supported` 每秒崩潰一次，
+  nginx 的 upstream 就是那個 socket，每個請求都是 502。單日最高 82,377 次失敗。
+- Gitaly 撞的是同一個限制（`unable to start the bootstrap: unlinkat ...:
+  operation not supported`），單一輪替日誌最高 45,288 次失敗。它靠 runit 每秒重試
+  偶爾能撞過去——**那是運氣，不是設計**，先前的「可自行重建」正是誤讀了這個現象。
+- 官方 image 的 `clean_stale_pids()` 救不了：它只刪 `pid`、`*.pid` 與 `socket.?`，
+  `socket` 與 `gitaly.socket` 兩個檔名都不匹配。
+- 容器主行程 `runsvdir` 全程存活，`restart: always` 完全不介入；`run.sh` 的清理
+  又只在容器未運行時執行，而 daemon 重啟根本不走 `run.sh`。三層機制同時失效。
+
+搬移 Gitaly 的 `runtime_dir` 有兩個代價，調整設定時務必留意：
+
+- **tmpfs 必須明確加 `exec`。** Docker 的 `tmpfs:` 預設帶 `noexec`，而 gitaly
+  每次啟動會把約 129 MB 的輔助執行檔（`gitaly-hooks`、`gitaly-git-*` 等）解壓到
+  `runtime_dir`，之後每個 git 操作都要從那裡 exec。漏了 `exec` 會讓 git 全掛。
+- **tmpfs 佔用計入容器的 4G cgroup 上限。** 五個 tmpfs 中只有 `/run/gitaly-runtime`
+  設了 `size=512m`（其餘只放 socket，用量可忽略）。這道上限是本次新引入的失效模式：
+  一旦寫滿，gitaly 解壓輔助執行檔會得到 `ENOSPC` 而起不來，日後 gitaly 版本增加
+  輔助執行檔時須同步調高。
+
+搬移後舊的 `data/data/gitaly/run/gitaly-<pid>/` 不會再被使用，但也不會被自動清除
+（`clean_stale_state()` 只刪 `-type s`）。確認服務正常後可一次性回收那約 129 MB：
+
+```bash
+cd gitlab && ./run.sh stop
+rm -rf docker/data/data/gitaly/run docker/data/data/gitlab-workhorse
+./run.sh
+```
 
 Rails 那一項的細節：GitLab 的 puma 本來就同時 bind unix socket 與
 `tcp://127.0.0.1:8080`，因此停用 unix bind 不減少任何能力。設定上
@@ -162,18 +198,36 @@ Rails 那一項的細節：GitLab 的 puma 本來就同時 bind unix socket 與
 `auth_socket` 設為 `nil`（見容器內 `libraries/puma.rb` 與 `libraries/gitlab_workhorse.rb`）；
 該值與內建預設相同，有意義的是「指定」這個動作本身。
 
-`run.sh` 另外承擔兩件事：啟動前清除 `data/data` 內殘留的 unix socket，並將
-`git-data/repositories` 補回 `2770`。注意**這道清理只在手動執行 `run.sh` 時發生**。
-此清理**僅在 GitLab 容器未運行時執行**：容器運行中時那些 socket 全是活的
-（Rails→Gitaly 等元件靠它們互連），刪掉會使新連線全數失敗，
-而 `docker compose up -d` 對運行中的容器不會重啟、不會重建 socket，服務將無法自癒。
+`run.sh` 的 `clean_stale_state()` 承擔兩件事：啟動前清除 `data/data` 內殘留的
+unix socket，並將 `git-data/repositories` 補回 `2770`。
 
-若仍遇到啟動失敗，可先確認殘留 socket 是否清乾淨。**須在容器停止的狀態下檢查**——
-服務正常運行時本來就會有數個活的 socket，那是正常現象，不是殘留：
+socket 清理**已降級為防呆**——四個元件的 socket 都搬走後，掛載區正常情況下不會
+再出現 socket。保留它是為了回收搬移前的孤兒檔、在設定被回滾時兜底，以及日後若有
+元件把 socket 放回掛載區能及早發現。`2770` 那半段則仍然必要：setgid 是 virtiofs
+的三項限制中唯一無法從設定面解決的。
+
+注意**這道清理只在手動執行 `run.sh` 時發生**，且**僅在 GitLab 容器未運行時執行**。
+guard 一併保留：設定若被回滾，掛載區會重新出現互連用的活 socket，刪掉會使新連線
+全數失敗，而 `docker compose up -d` 對運行中的容器不會重啟、不會重建 socket，
+服務將無法自癒。
+
+若仍遇到啟動失敗，先檢查這條不變式——**不分容器狀態**，掛載區都不該有任何 socket：
 
 ```bash
-docker ps --filter 'name=^gitlab$' --quiet   # 應無輸出（確認容器已停止）
-find gitlab/docker/data/data -type s         # 應無輸出
+find gitlab/docker/data/data -type s         # 應無輸出（容器運行中也一樣）
+```
+
+> 此不變式要等 `clean_stale_state()` 至少跑過一次才成立。套用上述設定變更時請走
+> `./run.sh stop && ./run.sh`——直接 `docker compose up -d` 雖然會 recreate 容器並
+> 讓新設定生效，卻會把搬移前的孤兒 socket 原封不動留在掛載區，之後檢查這條不變式
+> 就會得到假警報。
+
+有輸出就代表某個元件的 socket 又落回 virtiofs，回頭核對上表的設定。接著確認
+socket 確實建在 tmpfs、且 `runtime_dir` 沒有被加上 `noexec`：
+
+```bash
+docker exec gitlab ls -l /run/gitlab-workhorse/socket /run/gitaly/gitaly.socket
+docker exec gitlab sh -c 'mount | grep -E "/run/(gitlab-workhorse|gitaly)"'
 ```
 
 ---
@@ -380,15 +434,30 @@ GitLab 的自癒比 Harbor 多一層：容器被拉起只是第一步，容器**
 出現「容器 `Up`、HTTP 卻持續 502」的狀況——`restart: always` 對此無能為力，
 因為容器從頭到尾都是活的，壞掉的是它裡面的連線。
 
-現行設定已把會出事的三段連線全部移出掛載區（見〈[macOS bind mount 的限制與因應](#macos-bind-mount-的限制與因應)〉），
-因此 daemon 重啟後 GitLab 可完全自行恢復。若日後仍遇到啟動後持續 502，
-依序檢查這三處即可定位：
+現行設定已把**所有元件**的 socket 移出掛載區（見〈[macOS bind mount 的限制與因應](#macos-bind-mount-的限制與因應)〉），
+因此 daemon 重啟後 GitLab 可完全自行恢復。
+
+> 判準是「socket 是否落在 `/var/opt/gitlab` 底下」，**不是**「實測有沒有恢復」。
+> Gitaly 曾因為靠 runit 每秒重試偶爾能撞過去，被誤判為可自行重建，代價是一次
+> 長達 6.5 天的 502（見上述事故紀錄）。
+
+若日後仍遇到啟動後持續 502，依序檢查這幾處即可定位。注意 `current` 會被 svlogd
+輪替，用 `grep -c` 比 `tail` 可靠：
 
 | 檢查點 | 指令 | 正常表現 |
 | --- | --- | --- |
 | 元件是否反覆重啟 | `docker exec gitlab gitlab-ctl status` | 各服務存活秒數持續增長，不會反覆歸零 |
-| Workhorse→Rails | `docker exec gitlab tail /var/log/gitlab/gitlab-workhorse/current` | 無 `connect: operation not supported` |
-| Redis／PostgreSQL | `docker exec gitlab tail /var/log/gitlab/redis/current` | 無 `bind: Operation not supported` |
+| 掛載區是否又有 socket | `find gitlab/docker/data/data -type s` | 無輸出 |
+| Workhorse 自身 socket | `docker exec gitlab grep -c 'shutting down: remove' /var/log/gitlab/gitlab-workhorse/current \|\| true` | `0` |
+| Gitaly 自身 socket | `docker exec gitlab grep -c 'unable to start the bootstrap' /var/log/gitlab/gitaly/current \|\| true` | `0` |
+| Redis | `docker exec gitlab grep -c 'Failed opening Unix socket' /var/log/gitlab/redis/current \|\| true` | `0` |
+| PostgreSQL | `docker exec gitlab grep -c 'could not set permissions' /var/log/gitlab/postgresql/current \|\| true` | `0` |
+
+兩個細節：`grep -c` 在計數為 0 時 exit code 是 `1`，貼進 `set -e` 的腳本會被誤判成
+失敗，故上表補了 `|| true`。另外**別用寬鬆的 `operation not supported` 當關鍵字**
+——gitaly 每次正常啟動都會記一筆良性的 `Unable to set SO_REUSEPORT`（unix socket
+不支援該選項，只影響零停機升級），拿它當判準會恆為 `1`。上表改用各元件實際的
+失敗訊息。
 
 真的卡住時，走一次完整流程讓 `run.sh` 的 socket 清理有機會執行：
 
