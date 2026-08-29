@@ -22,6 +22,9 @@
 的 8 個 image tag 與 `docker/build.sh` 的 `HARBOR_VERSION`（`harbor/docker/Dockerfile`
 僅為佔位、不參與部署）。升級注意事項見「[版本升級](#版本升級)」。
 
+> **CI Runner**：本 repo 不提供 GitLab Runner。GitLab 本身可正常建立 CI/CD pipeline，
+> 但沒有 executor 時 job 會停在 pending——請由各 Group 自行建立並註冊所需的 Runner。
+
 ## 專案架構
 
 ```text

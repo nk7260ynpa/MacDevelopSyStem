@@ -12,18 +12,18 @@
 
 **已確認的執行範圍**（使用者核可）：
 
--   執行期資源全清：先在 GitLab 註銷 runner，再停容器、刪 image，最後刪目錄。
--   目錄下 gitignored 的本機機密檔（`docker/.env`、`docker/data/config.toml`、`.env`）
+- 執行期資源全清：先在 GitLab 註銷 runner，再停容器、刪 image，最後刪目錄。
+- 目錄下 gitignored 的本機機密檔（`docker/.env`、`docker/data/config.toml`、`.env`）
     直接連同目錄刪除，不另行備份。
 
 ## 影響範圍調查結論
 
--   `gitlab-runner/` 是**獨立的 Compose 專案**（`name: gitlab-runner`），沒有 `networks:`
+- `gitlab-runner/` 是**獨立的 Compose 專案**（`name: gitlab-runner`），沒有 `networks:`
     也沒有 `depends_on`，與 `gitlab/`、`harbor/` 完全解耦。
--   耦合僅為**單向**：runner 透過 `host.docker.internal:8080` 連回 GitLab。GitLab 與
+- 耦合僅為**單向**：runner 透過 `host.docker.internal:8080` 連回 GitLab。GitLab 與
     Harbor 兩邊的 compose／run.sh 都沒有任何 runner 相關設定。
--   唯一啟動／註冊 runner 的入口就是 `gitlab-runner/run.sh` 與 `gitlab-runner/docker/build.sh`。
--   → **刪除 `gitlab-runner/` 不影響 GitLab 與 Harbor 的啟動或運行。**
+- 唯一啟動／註冊 runner 的入口就是 `gitlab-runner/run.sh` 與 `gitlab-runner/docker/build.sh`。
+- → **刪除 `gitlab-runner/` 不影響 GitLab 與 Harbor 的啟動或運行。**
 
 ## 實作步驟
 
@@ -128,7 +128,7 @@ docker inspect -f '{{.Name}} {{.HostConfig.RestartPolicy.Name}}' gitlab harbor-c
 
 ## 風險
 
--   `unregister --all-runners` 不可逆；GitLab 端該 runner 紀錄會消失，日後各 Group 需
+- `unregister --all-runners` 不可逆；GitLab 端該 runner 紀錄會消失，日後各 Group 需
     自行重新建立。此為任務本意。
--   刪目錄會一併清掉含明文權杖／Harbor 帳密的本機檔（使用者已確認不需備份）。
--   README 架構樹的 box-drawing 前綴容易改錯，需以驗證步驟 3 目視確認。
+- 刪目錄會一併清掉含明文權杖／Harbor 帳密的本機檔（使用者已確認不需備份）。
+- README 架構樹的 box-drawing 前綴容易改錯，需以驗證步驟 3 目視確認。
