@@ -1,0 +1,30 @@
+# Harbor 的 PersistentVolumeClaim。
+#
+# 單一 PVC 對應 harbor/k8s/data 整個目錄，各 service 以 subPath 取用：
+#
+#   registry / registryctl → registry（image blob）、config/registry
+#   postgresql             → database
+#   redis                  → redis
+#   core                   → 整個 data（harbor.yml 的 data_volume）、psc、
+#                            ca_download、config/core、secret/*
+#   jobservice             → job_logs、config/jobservice
+#   portal                 → config/portal/nginx.conf
+#   proxy                  → config/nginx
+#
+# volumeName 明確綁定 01-pv.template.yaml 產生的 PV，避免綁到別的 manual PV。
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: harbor-data
+  namespace: devops
+  labels:
+    app.kubernetes.io/name: harbor
+    app.kubernetes.io/part-of: macdevelopsystem
+spec:
+  storageClassName: manual
+  volumeName: harbor-data-pv
+  accessModes:
+    - ReadWriteMany
+  resources:
+    requests:
+      storage: 64Gi

@@ -1,0 +1,31 @@
+# Harbor 的 hostPath PersistentVolume（範本）。
+#
+# __HARBOR_DATA__ 是佔位符，由 apply.sh 以 sed 換成 harbor/k8s/data 的絕對路徑後
+# 才送給 kubectl。不把路徑寫死在版控檔裡，repo 才能 clone 到任意位置。
+#
+# 為什麼只有一組 PV 而不是每個 service 各一組：
+#   Harbor 的 core 依 harbor.yml 的 data_volume 設定必須掛到整個 data 目錄
+#   （/data），單獨切分反而做不到。既然一定要有一組涵蓋全部的 PV，其餘 service
+#   就一律以 subPath 從同一個 PVC 取用自己需要的子路徑，對應關係一眼可見。
+#
+# accessModes: ReadWriteMany —— 八個 service 的 pod 會同時掛載同一個 PVC。
+# 單節點的 hostPath 實質上就是多讀多寫，宣告 RWX 才不會被 binder 擋下。
+#
+# reclaimPolicy: Retain —— 刪掉 PVC/PV 不會清掉 data 內的實際資料。
+apiVersion: v1
+kind: PersistentVolume
+metadata:
+  name: harbor-data-pv
+  labels:
+    app.kubernetes.io/name: harbor
+    app.kubernetes.io/part-of: macdevelopsystem
+spec:
+  storageClassName: manual
+  persistentVolumeReclaimPolicy: Retain
+  accessModes:
+    - ReadWriteMany
+  capacity:
+    storage: 64Gi
+  hostPath:
+    path: __HARBOR_DATA__
+    type: DirectoryOrCreate

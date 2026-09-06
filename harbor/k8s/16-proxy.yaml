@@ -1,0 +1,92 @@
+# Proxy（nginx，Harbor 唯一的對外入口）。
+#
+# 採 LoadBalancer 而非 NodePort：需求是 K8s 接手 Docker Compose 原本的 8081，
+# 而 NodePort 的可用範圍是 30000-32767，涵蓋不到。Docker Desktop 會把
+# type: LoadBalancer 的 Service 直接綁到 localhost 的指定 port。
+#
+# 對外 8081 → 容器內 nginx 的 8080，與 Compose 的「8081:8080」完全一致；
+# harbor.yml 的 external_url 因此不需要更動（仍是 http://localhost:8081）。
+#
+# Service 名取 harbor（不是 proxy）：這是給人用的對外入口，內部沒有任何設定
+# 檔以 proxy 為名互連，取一個一眼看得懂的名字比較好。
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: proxy
+  namespace: devops
+  labels:
+    app.kubernetes.io/name: harbor
+    app.kubernetes.io/component: proxy
+    app.kubernetes.io/part-of: macdevelopsystem
+spec:
+  replicas: 1
+  strategy:
+    type: Recreate
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: harbor
+      app.kubernetes.io/component: proxy
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: harbor
+        app.kubernetes.io/component: proxy
+        app.kubernetes.io/part-of: macdevelopsystem
+    spec:
+      containers:
+        - name: proxy
+          image: goharbor/nginx-photon:v2.15.2
+          imagePullPolicy: IfNotPresent
+          securityContext:
+            capabilities:
+              drop: ["ALL"]
+              add: ["CHOWN", "SETGID", "SETUID", "NET_BIND_SERVICE"]
+          ports:
+            - name: http
+              containerPort: 8080
+          volumeMounts:
+            - name: data
+              mountPath: /etc/nginx
+              subPath: config/nginx
+            - name: data
+              mountPath: /harbor_cust_cert
+              subPath: config/shared/trust-certificates
+          readinessProbe:
+            tcpSocket:
+              port: http
+            initialDelaySeconds: 10
+            periodSeconds: 15
+          livenessProbe:
+            tcpSocket:
+              port: http
+            initialDelaySeconds: 30
+            periodSeconds: 30
+          resources:
+            requests:
+              cpu: "25m"
+              memory: "64Mi"
+            limits:
+              memory: "256Mi"
+      volumes:
+        - name: data
+          persistentVolumeClaim:
+            claimName: harbor-data
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: harbor
+  namespace: devops
+  labels:
+    app.kubernetes.io/name: harbor
+    app.kubernetes.io/component: proxy
+    app.kubernetes.io/part-of: macdevelopsystem
+spec:
+  type: LoadBalancer
+  selector:
+    app.kubernetes.io/name: harbor
+    app.kubernetes.io/component: proxy
+  ports:
+    - name: http
+      port: 8081
+      targetPort: http

@@ -1,0 +1,116 @@
+# Harbor Core（API 與業務邏輯主體）。
+#
+# 掛載逐項對應 Docker Compose 方案的 core service：
+#   - /data 掛整個 PVC（不帶 subPath），對應 harbor.yml 的 data_volume: /data
+#   - private_key.pem 與 key（secretkey）是加解密的根本，遷移時缺了它們，
+#     資料庫內既有的密碼與 robot 帳號權杖全部解不開
+#   - /etc/core/token 對應 psc 目錄，registry 的 token 簽發會用到
+#
+# Service 名必須是 core：nginx.conf 的 upstream 與各 service 的 env
+# （CORE_URL、TOKEN_SERVICE_URL）都寫 core:8080。
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: core
+  namespace: devops
+  labels:
+    app.kubernetes.io/name: harbor
+    app.kubernetes.io/component: core
+    app.kubernetes.io/part-of: macdevelopsystem
+spec:
+  replicas: 1
+  strategy:
+    type: Recreate
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: harbor
+      app.kubernetes.io/component: core
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: harbor
+        app.kubernetes.io/component: core
+        app.kubernetes.io/part-of: macdevelopsystem
+    spec:
+      containers:
+        - name: core
+          image: goharbor/harbor-core:v2.15.2
+          imagePullPolicy: IfNotPresent
+          securityContext:
+            capabilities:
+              drop: ["ALL"]
+              add: ["SETGID", "SETUID"]
+          envFrom:
+            - secretRef:
+                name: harbor-env-core
+          ports:
+            - name: core
+              containerPort: 8080
+          volumeMounts:
+            - name: data
+              mountPath: /etc/core/ca
+              subPath: ca_download
+            - name: data
+              mountPath: /data
+            - name: data
+              mountPath: /etc/core/certificates
+              subPath: config/core/certificates
+            - name: data
+              mountPath: /etc/core/app.conf
+              subPath: config/core/app.conf
+            - name: data
+              mountPath: /etc/core/private_key.pem
+              subPath: secret/core/private_key.pem
+            - name: data
+              mountPath: /etc/core/key
+              subPath: secret/keys/secretkey
+            - name: data
+              mountPath: /etc/core/token
+              subPath: psc
+            - name: data
+              mountPath: /harbor_cust_cert
+              subPath: config/shared/trust-certificates
+          # core 提供 /api/v2.0/ping，比 tcpSocket 更能反映真正就緒
+          # （DB 連得上、設定載入完成才會回 200）。
+          readinessProbe:
+            httpGet:
+              path: /api/v2.0/ping
+              port: core
+            initialDelaySeconds: 20
+            periodSeconds: 15
+            failureThreshold: 10
+          livenessProbe:
+            httpGet:
+              path: /api/v2.0/ping
+              port: core
+            initialDelaySeconds: 90
+            periodSeconds: 30
+            failureThreshold: 5
+          resources:
+            requests:
+              cpu: "100m"
+              memory: "256Mi"
+            limits:
+              memory: "1Gi"
+      volumes:
+        - name: data
+          persistentVolumeClaim:
+            claimName: harbor-data
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: core
+  namespace: devops
+  labels:
+    app.kubernetes.io/name: harbor
+    app.kubernetes.io/component: core
+    app.kubernetes.io/part-of: macdevelopsystem
+spec:
+  selector:
+    app.kubernetes.io/name: harbor
+    app.kubernetes.io/component: core
+  ports:
+    - name: core
+      port: 8080
+      targetPort: core
