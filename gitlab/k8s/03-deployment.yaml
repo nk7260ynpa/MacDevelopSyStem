@@ -34,6 +34,14 @@ spec:
         app.kubernetes.io/part-of: macdevelopsystem
     spec:
       terminationGracePeriodSeconds: 60
+      # 停用 K8s 自動注入的 Service 環境變數。
+      # kubelet 預設會為同 namespace 內的每個 Service 注入一組變數，例如
+      # POSTGRESQL_PORT=tcp://10.x.x.x:5432、CORE_PORT=…、GITLAB_PORT=…。
+      # 這些名稱與 Harbor 自己設定檔用的鍵直接撞名：實測 jobservice 因此讀到
+      # POSTGRESQL_PORT=tcp://…:5432 而在 strconv.Atoi 失敗
+      # （env 檔沒有這個鍵時就沒有東西可以覆蓋它）。Docker Compose 版沒有這種
+      # 注入，關掉才能讓兩套方案的環境完全一致。
+      enableServiceLinks: false
       # GitLab 的各元件互連 socket 一律不落在 hostPath（見下方 volumes 的說明），
       # 而 K8s 的 emptyDir 無法像 docker 的 tmpfs 那樣直接指定 uid/gid/mode，
       # 只能先以 root 身分把目錄權限調好，主容器才拿得到正確的擁有者與模式。

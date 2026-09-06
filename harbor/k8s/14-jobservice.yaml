@@ -29,6 +29,14 @@ spec:
         app.kubernetes.io/component: jobservice
         app.kubernetes.io/part-of: macdevelopsystem
     spec:
+      # 停用 K8s 自動注入的 Service 環境變數。
+      # kubelet 預設會為同 namespace 內的每個 Service 注入一組變數，例如
+      # POSTGRESQL_PORT=tcp://10.x.x.x:5432、CORE_PORT=…、GITLAB_PORT=…。
+      # 這些名稱與 Harbor 自己設定檔用的鍵直接撞名：實測 jobservice 因此讀到
+      # POSTGRESQL_PORT=tcp://…:5432 而在 strconv.Atoi 失敗
+      # （env 檔沒有這個鍵時就沒有東西可以覆蓋它）。Docker Compose 版沒有這種
+      # 注入，關掉才能讓兩套方案的環境完全一致。
+      enableServiceLinks: false
       containers:
         - name: jobservice
           image: goharbor/harbor-jobservice:v2.15.2
