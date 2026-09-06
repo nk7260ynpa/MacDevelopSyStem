@@ -58,4 +58,4 @@ echo "[build.sh] 將 root.crt 佈署至 registry 設定目錄..."
 cp -f "${DATA_DIR}/secret/registry/root.crt" "${DATA_DIR}/config/registry/root.crt"
 
 echo ""
-echo "[build.sh] 完成。可使用 ../run.sh 啟動 Harbor。"
+echo "[build.sh] 完成。可使用 ../run.sh docker 啟動 Harbor。"

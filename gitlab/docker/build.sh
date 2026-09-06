@@ -21,4 +21,4 @@ cd "${SCRIPT_DIR}"
 echo "[build.sh] 建立本地 image macdev/gitlab:latest（建置時 --pull 拉取最新基底映像）..."
 docker compose build --pull
 
-echo "[build.sh] 完成。可使用 ../run.sh 啟動 GitLab。"
+echo "[build.sh] 完成。可使用 ../run.sh docker 啟動 GitLab。"

@@ -251,9 +251,9 @@ Workhorse 與 Gitaly 原本留在掛載區，理由是「實測可自行重建�
 （`clean_stale_state()` 只刪 `-type s`）。確認服務正常後可一次性回收那約 129 MB：
 
 ```bash
-cd gitlab && ./run.sh stop
+cd gitlab && ./run.sh docker stop
 rm -rf docker/data/data/gitaly/run docker/data/data/gitlab-workhorse
-./run.sh
+./run.sh docker
 ```
 
 Rails 那一項的細節：GitLab 的 puma 本來就同時 bind unix socket 與
@@ -283,7 +283,7 @@ find gitlab/docker/data/data -type s         # 應無輸出（容器運行中也
 ```
 
 > 此不變式要等 `clean_stale_state()` 至少跑過一次才成立。套用上述設定變更時請走
-> `./run.sh stop && ./run.sh`——直接 `docker compose up -d` 雖然會 recreate 容器並
+> `./run.sh docker stop && ./run.sh docker`——直接 `docker compose up -d` 雖然會
 > 讓新設定生效，卻會把搬移前的孤兒 socket 原封不動留在掛載區，之後檢查這條不變式
 > 就會得到假警報。
 
@@ -329,7 +329,8 @@ cd harbor
 
 - 網頁：<http://localhost:8081>
 - 持久化資料位置：`harbor/k8s/data/`（已於 `.gitignore` 排除）
-- 八個 service 各自是一個 Deployment，全部位於 `devops` namespace
+- 8 個 service 由 7 個 Deployment 承載（registry 與 registryctl 同一個 Pod），
+  對外則有 8 個 Service，全部位於 `devops` namespace
 
 > K8s 的 Service 名嚴格對齊 Compose 的 service 名（`core`、`redis`、`postgresql`…），
 > 因為 prepare 產生的設定裡寫的就是這些位址（`core:8080`、`redis:6379`）。
@@ -368,7 +369,7 @@ cd harbor
 - **⚠ 首次登入後請立即修改密碼。**
 
 > 修改 `harbor/docker/harbor.yml` 後，必須重新執行對應方案的 `build.sh` 讓 prepare
-> 重生設定，再 `./run.sh stop && ./run.sh` 才會生效。兩套方案共用同一份 `harbor.yml`
+> 重生設定，再以對應方案 `stop` 後重新啟動才會生效。兩套方案共用同一份 `harbor.yml`
 > ——hostname、port 與 external_url 在兩邊完全相同，沒有需要分岔的欄位。
 
 實作上針對 macOS / Docker Desktop 環境做了三項穩定性處理（皆已內建於設定，平常無需手動介入）：
@@ -513,7 +514,7 @@ GitLab 的自癒比 Harbor 多一層：容器被拉起只是第一步，容器**
 真的卡住時，走一次完整流程讓 `run.sh` 的 socket 清理有機會執行：
 
 ```bash
-cd gitlab && ./run.sh stop && ./run.sh
+cd gitlab && ./run.sh docker stop && ./run.sh docker
 ```
 
 ### 查看 log
