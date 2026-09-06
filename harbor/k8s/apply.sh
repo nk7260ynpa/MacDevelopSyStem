@@ -129,6 +129,14 @@ if ! command -v kubectl >/dev/null 2>&1; then
   exit 1
 fi
 
+# check_port_conflict 靠 lsof 判斷佔埠情形。找不到它就等於那道檢查整個失效，
+# 而失效的方向是「放行」——會一路跑到 LoadBalancer 靜默停在 <pending>，
+# 沒有任何錯誤訊息可循。寧可在這裡就停下來。
+if ! command -v lsof >/dev/null 2>&1; then
+  echo "[apply.sh] 錯誤：找不到 lsof，無法檢查 port 是否被佔用。" >&2
+  exit 1
+fi
+
 # 檢查設定與金鑰是否齊備。金鑰特別重要：kubelet 對 hostPath 的 subPath 在來源
 # 不存在時會「建出一個目錄」，core 於是拿到目錄而非檔案，錯誤訊息完全對應不到
 # 真正的原因（rsync 中斷、只搬了一半）。在這裡擋下來省掉大量除錯時間。

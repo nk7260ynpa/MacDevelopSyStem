@@ -391,6 +391,19 @@ Harbor port 8081 已刻意錯開 GitLab 的 8080，兩者可同時運行（記�
 > GitLab 與 Harbor 一起刪掉。兩邊的 `k8s/delete.sh` 因此一律以 label selector
 > 精確指定自己的資源，不碰 namespace 本身。
 
+### 在 devops 底下新增 Deployment 時
+
+**必須帶上 `enableServiceLinks: false`。** kubelet 預設會為同 namespace 內的
+每個 Service 注入一組環境變數（`CORE_PORT=tcp://10.x.x.x:8080`、
+`POSTGRESQL_PORT=…`、`GITLAB_PORT=…`），這些名稱很容易與應用程式自己的設定鍵
+撞名。導入本方案時就實際踩到：Harbor 的 `jobservice` 因為它的 env 檔沒有
+`POSTGRESQL_PORT`、注入值沒有東西可以覆蓋，讀到 `tcp://…:5432` 後在
+`strconv.Atoi` 失敗（`core` 剛好有這個鍵才逃過一劫）。
+
+這種污染**不會有任何警告**，Docker Compose 版也完全不會出現，因此排查時很難
+往這個方向想。現有 8 份 manifest 都帶了這個欄位，照著抄就不會漏；服務名越通用
+（`core`、`registry`、`redis`），撞名的機會越高。
+
 ---
 
 ## 開機自動啟動與自動修復
@@ -600,7 +613,8 @@ cd harbor
 | `status` | `kubectl get pods,svc,pvc` | `docker compose ps` |
 
 > 兩套方案搶同一組 port（GitLab 8080／2222、Harbor 8081），**同一時間只能啟動其中一套**。
-> `k8s/apply.sh` 會在啟動前檢查 Compose 版是否仍在運行，衝突時直接擋下並提示先停掉。
+> `k8s/apply.sh` 會在啟動前檢查這些 port 是否已被佔用，衝突時直接擋下；
+> 佔用者是 Compose 版時另外提示對應的停止指令。
 
 ## 版本升級
 
@@ -608,7 +622,7 @@ cd harbor
 
 | 服務 | 方案 | 釘選位置 |
 | --- | --- | --- |
-| GitLab | K8s | `k8s/03-deployment.yaml` 的 `image` |
+| GitLab | K8s | `k8s/03-deployment.yaml` 的**兩處** `image`（initContainer 與主容器） |
 | GitLab | Compose | `docker/Dockerfile` 的 `FROM` |
 | Harbor | K8s | `k8s/1*.yaml` 的各 `image`、`k8s/build.sh` 的 `HARBOR_VERSION` |
 | Harbor | Compose | `docker/docker-compose.yaml` 的 8 個 tag 與 `build.sh` |

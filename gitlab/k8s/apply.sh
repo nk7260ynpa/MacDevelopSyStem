@@ -149,6 +149,14 @@ if ! command -v kubectl >/dev/null 2>&1; then
   exit 1
 fi
 
+# check_port_conflict 靠 lsof 判斷佔埠情形。找不到它就等於那道檢查整個失效，
+# 而失效的方向是「放行」——會一路跑到 LoadBalancer 靜默停在 <pending>，
+# 沒有任何錯誤訊息可循。寧可在這裡就停下來。
+if ! command -v lsof >/dev/null 2>&1; then
+  echo "[apply.sh] 錯誤：找不到 lsof，無法檢查 port 是否被佔用。" >&2
+  exit 1
+fi
+
 echo "[apply.sh] 目前 kubectl context：$(kubectl config current-context)"
 check_hostpath_support
 check_port_conflict
