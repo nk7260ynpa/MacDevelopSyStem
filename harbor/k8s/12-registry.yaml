@@ -1,0 +1,164 @@
+# Registry 與 RegistryCtl。
+#
+# 兩者放在同一個 Pod：它們必須共用 /storage（image blob）與 /etc/registry
+# （同一份設定與 root.crt），拆成兩個 Pod 就得讓兩邊同時掛同一組路徑，沒有好處。
+# 對外仍是兩個獨立的 Service（registry:5000、registryctl:8080），因為 core 的
+# env 內是 REGISTRY_URL=http://registry:5000 與
+# REGISTRY_CONTROLLER_URL=http://registryctl:8080，名稱必須完全對上。
+#
+# root.crt 直接放在 registry 設定目錄內、靠整個目錄掛載一併帶入
+# /etc/registry/root.crt，與 Docker Compose 方案的做法一致（build.sh 會把它從
+# secret/registry/ 複製過去）。
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: registry
+  namespace: devops
+  labels:
+    app.kubernetes.io/name: harbor
+    app.kubernetes.io/component: registry
+    app.kubernetes.io/part-of: macdevelopsystem
+spec:
+  replicas: 1
+  strategy:
+    type: Recreate
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: harbor
+      app.kubernetes.io/component: registry
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: harbor
+        app.kubernetes.io/component: registry
+        app.kubernetes.io/part-of: macdevelopsystem
+    spec:
+      # 停用 K8s 自動注入的 Service 環境變數。
+      # kubelet 預設會為同 namespace 內的每個 Service 注入一組變數，例如
+      # POSTGRESQL_PORT=tcp://10.x.x.x:5432、CORE_PORT=…、GITLAB_PORT=…。
+      # 這些名稱與 Harbor 自己設定檔用的鍵直接撞名：實測 jobservice 因此讀到
+      # POSTGRESQL_PORT=tcp://…:5432 而在 strconv.Atoi 失敗
+      # （env 檔沒有這個鍵時就沒有東西可以覆蓋它）。Docker Compose 版沒有這種
+      # 注入，關掉才能讓兩套方案的環境完全一致。
+      enableServiceLinks: false
+      containers:
+        - name: registry
+          image: goharbor/registry-photon:v2.15.2
+          imagePullPolicy: IfNotPresent
+          securityContext:
+            capabilities:
+              drop: ["ALL"]
+              add: ["CHOWN", "SETGID", "SETUID"]
+          ports:
+            - name: registry
+              containerPort: 5000
+          volumeMounts:
+            - name: data
+              mountPath: /storage
+              subPath: registry
+            - name: data
+              mountPath: /etc/registry
+              subPath: config/registry
+            - name: data
+              mountPath: /harbor_cust_cert
+              subPath: config/shared/trust-certificates
+          readinessProbe:
+            tcpSocket:
+              port: registry
+            initialDelaySeconds: 10
+            periodSeconds: 15
+          livenessProbe:
+            tcpSocket:
+              port: registry
+            initialDelaySeconds: 30
+            periodSeconds: 30
+          resources:
+            requests:
+              cpu: "50m"
+              memory: "128Mi"
+            limits:
+              memory: "512Mi"
+        - name: registryctl
+          image: goharbor/harbor-registryctl:v2.15.2
+          imagePullPolicy: IfNotPresent
+          securityContext:
+            capabilities:
+              drop: ["ALL"]
+              add: ["CHOWN", "SETGID", "SETUID"]
+          envFrom:
+            - secretRef:
+                name: harbor-env-registryctl
+          ports:
+            - name: registryctl
+              containerPort: 8080
+          volumeMounts:
+            - name: data
+              mountPath: /storage
+              subPath: registry
+            - name: data
+              mountPath: /etc/registry
+              subPath: config/registry
+            - name: data
+              mountPath: /etc/registryctl/config.yml
+              subPath: config/registryctl/config.yml
+            - name: data
+              mountPath: /harbor_cust_cert
+              subPath: config/shared/trust-certificates
+          readinessProbe:
+            tcpSocket:
+              port: registryctl
+            initialDelaySeconds: 10
+            periodSeconds: 15
+          livenessProbe:
+            tcpSocket:
+              port: registryctl
+            initialDelaySeconds: 30
+            periodSeconds: 30
+          resources:
+            requests:
+              cpu: "25m"
+              memory: "64Mi"
+            limits:
+              memory: "256Mi"
+      volumes:
+        - name: data
+          persistentVolumeClaim:
+            claimName: harbor-data
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: registry
+  namespace: devops
+  labels:
+    app.kubernetes.io/name: harbor
+    app.kubernetes.io/component: registry
+    app.kubernetes.io/part-of: macdevelopsystem
+spec:
+  selector:
+    app.kubernetes.io/name: harbor
+    app.kubernetes.io/component: registry
+  ports:
+    - name: registry
+      port: 5000
+      targetPort: registry
+---
+# 與上面指向同一組 Pod，僅暴露 registryctl 容器的 8080。
+apiVersion: v1
+kind: Service
+metadata:
+  name: registryctl
+  namespace: devops
+  labels:
+    app.kubernetes.io/name: harbor
+    app.kubernetes.io/component: registry
+    app.kubernetes.io/part-of: macdevelopsystem
+spec:
+  selector:
+    app.kubernetes.io/name: harbor
+    app.kubernetes.io/component: registry
+  ports:
+    - name: registryctl
+      port: 8080
+      targetPort: registryctl

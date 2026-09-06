@@ -1,11 +1,13 @@
 # MacDevelopSyStem
 
 本專案用於在 macOS 上建立基本開發環境，包含常見的開發者工具（如 GitLab、Harbor 等），
-透過 Docker 與腳本化部署，快速搭建可重現的本地開發基礎設施。
+透過 Kubernetes 與腳本化部署，快速搭建可重現的本地開發基礎設施。
+每個工具都提供 Kubernetes（預設）與 Docker Compose（備用）兩套部署方案。
 
 ## 專案目標
 
-- 以容器化（Docker）方式部署開發者工具，避免污染主機環境。
+- 以容器化方式部署開發者工具，避免污染主機環境。
+- 以 Kubernetes Deployment 作為預設方案，讓服務掛掉時由 controller 自動重建。
 - 提供一鍵啟動／停止腳本，降低安裝與設定成本。
 - 集中管理各工具的設定、資料卷與日誌，方便備份與遷移。
 
@@ -17,10 +19,13 @@
 | Harbor | 私有 Container Registry | `v2.15.2` | 已支援 |
 | （後續擴充） | 視需求新增，例如 Jenkins、Nexus、MinIO 等 | — | — |
 
-各服務的映像版本一律**釘選**，不使用浮動的 `:latest`。GitLab 釘選於其
-`docker/Dockerfile`；Harbor 為多映像架構，實際生效的是 `docker/docker-compose.yaml`
-的 8 個 image tag 與 `docker/build.sh` 的 `HARBOR_VERSION`（`harbor/docker/Dockerfile`
-僅為佔位、不參與部署）。升級注意事項見「[版本升級](#版本升級)」。
+兩個工具皆預設以 **Kubernetes** 部署（`k8s/`），Docker Compose 方案（`docker/`）
+保留為備用，兩者資料各自獨立、同一時間只能啟動其中一套。
+
+各服務的映像版本一律**釘選**，不使用浮動的 `:latest`，且**兩套方案的版本必須一致**
+——上一輪的 K8s 方案正是因為版本停止跟進、與 Compose 長期不同步而被整套移除。
+釘選位置與升級注意事項見「[版本升級](#版本升級)」（`harbor/docker/Dockerfile`
+僅為佔位、不參與部署）。
 
 > **CI Runner**：本 repo 不提供 GitLab Runner。GitLab 本身可正常建立 CI/CD pipeline，
 > 但沒有 executor 時 job 會停在 pending——請由各 Group 自行建立並註冊所需的 Runner。
@@ -33,38 +38,68 @@ MacDevelopSyStem/
 ├── .gitignore             # Git 忽略清單
 ├── plans/                 # 各次改動的實作計畫紀錄（歷史文件，不參與部署）
 ├── gitlab/                # GitLab 部署設定
-│   ├── run.sh             # Docker Compose 啟動入口（up/logs/stop/status）
-│   └── docker/            # Docker Compose 方案
+│   ├── run.sh             # 啟動入口（預設 K8s；up/logs/stop/status）
+│   ├── k8s/               # Kubernetes 方案（預設）
+│   │   ├── 00-namespace.yaml    # devops namespace（與 Harbor 共用）
+│   │   ├── 01-pv.template.yaml  # hostPath PV，路徑由 apply.sh 代入
+│   │   ├── 02-pvc.yaml
+│   │   ├── 03-deployment.yaml   # Deployment + initContainer + emptyDir
+│   │   ├── 04-service.yaml      # LoadBalancer 8080／2222
+│   │   ├── apply.sh             # 套用資源（含佈建方式與 port 衝突檢查）
+│   │   ├── delete.sh            # 移除資源（data 保留）
+│   │   ├── migrate.sh           # 自 docker/data 遷移既有資料
+│   │   └── data/                # 持久化資料（僅 .keep 納入版控）
+│   └── docker/            # Docker Compose 方案（備用）
 │       ├── build.sh
 │       ├── Dockerfile
 │       ├── docker-compose.yaml
 │       ├── .env.example
 │       └── data/          # 持久化資料（僅 .keep 納入版控）
 └── harbor/                # Harbor 部署設定
-    ├── run.sh             # Docker Compose 啟動入口（up/logs/stop/status）
-    └── docker/            # Docker Compose 方案
+    ├── run.sh             # 啟動入口（預設 K8s；up/logs/stop/status）
+    ├── k8s/               # Kubernetes 方案（預設）
+    │   ├── 00-namespace.yaml    # devops namespace（與 GitLab 共用）
+    │   ├── 01-pv.template.yaml  # hostPath PV，路徑由 apply.sh 代入
+    │   ├── 02-pvc.yaml          # 單一 PVC，各 service 以 subPath 取用
+    │   ├── 10-redis.yaml        # 10~16 為 8 個 service 的 Deployment 與 Service
+    │   ├── 11-postgresql.yaml
+    │   ├── 12-registry.yaml     # registry 與 registryctl 同一 Pod
+    │   ├── 13-core.yaml
+    │   ├── 14-jobservice.yaml
+    │   ├── 15-portal.yaml
+    │   ├── 16-proxy.yaml        # LoadBalancer 8081
+    │   ├── apply.sh             # 套用資源 + 將 env 檔轉為 Secret
+    │   ├── build.sh             # 全新建立時以 prepare 產生設定
+    │   ├── delete.sh            # 移除資源（data 保留）
+    │   ├── migrate.sh           # 自 docker/data 遷移既有資料
+    │   └── data/                # 持久化資料（僅 .keep 納入版控）
+    └── docker/            # Docker Compose 方案（備用）
         ├── build.sh       # 拉 image + 用 prepare 產生各 service 設定
         ├── Dockerfile
         ├── docker-compose.yaml
-        ├── harbor.yml     # Harbor 設定範本（供 prepare 讀取）
+        ├── harbor.yml     # Harbor 設定範本（供 prepare 讀取，兩套方案共用）
         ├── .env.example
         └── data/          # 持久化資料（僅 .keep 納入版控）
 ```
 
 ### 資料持久化設計
 
-各工具的持久化資料皆位於自己的 `docker/data` 子目錄下：
+每套部署方案的持久化資料各自獨立，皆位於該方案目錄下的 `data` 子目錄：
 
-| 工具 | 資料位置 |
-| --- | --- |
-| GitLab | `gitlab/docker/data/` |
-| Harbor | `harbor/docker/data/` |
+| 工具 | Kubernetes（預設） | Docker Compose（備用） |
+| --- | --- | --- |
+| GitLab | `gitlab/k8s/data/` | `gitlab/docker/data/` |
+| Harbor | `harbor/k8s/data/` | `harbor/docker/data/` |
 
-- 以 bind mount 直接掛載各自的 `docker/data`，資料落在 macOS 本機、可直接備份與遷移。
+- 兩套方案都讓資料落在 macOS 本機、可直接備份與遷移：Compose 走 bind mount，
+  K8s 走指向同一種路徑的 hostPath PV（`reclaimPolicy: Retain`，移除資源不會清資料）。
 - 各本機 `data` 資料夾以 `.keep` 納入版控，實際內容由 `.gitignore` 排除。
+- 要把 Compose 版的資料帶進 K8s，用各自的 `k8s/migrate.sh`（來源只讀不刪）。
 
 > 注意事項：
 >
+> - **兩套方案的資料不會互相同步**。切換到 K8s 之後，Compose 版的 `docker/data`
+>   會停在切換當下的狀態；回退等同放棄 K8s 期間的所有異動。
 > - 舊版共用資料夾 `gitlab/git_data/`、`harbor/harbor_data/` 已停用並由 `.gitignore` 整夾忽略，
 >   確認無需保留後可手動刪除。
 
@@ -74,27 +109,64 @@ MacDevelopSyStem/
 - Docker Desktop 或同等容器執行環境
   - 建議分配 ≥ 4 GB RAM 給 Docker（GitLab Omnibus 建議值）
   - 若同時啟用 Harbor，建議 ≥ 6 GB RAM（Harbor 含 8 個 service）
+- Kubernetes（預設部署方案所需）
+  - Docker Desktop → Settings → Kubernetes → Enable Kubernetes
+  - **Cluster provisioning method 必須選 Kubeadm**：該模式下節點就是 Docker
+    Desktop VM，VM 透過 virtiofs 掛有 `/Users`，hostPath 才看得到 macOS 上的
+    `k8s/data`。若選 kind，節點是 docker 容器、容器內沒有 `/Users`，hostPath 會
+    靜默地建出一個空目錄——服務照樣起得來但讀不到任何既有資料。兩支
+    `k8s/apply.sh` 會偵測並擋下這種情況。
+  - `kubectl`（Docker Desktop 已內建，或 `brew install kubectl`）
 - Bash／Zsh
 
 ---
 
 ## GitLab 部署
 
-GitLab 以 Docker Compose 部署，使用 8080（HTTP）與 2222（SSH）兩個 port。
+GitLab 使用 8080（HTTP）與 2222（SSH）兩個 port。**預設以 Kubernetes 部署**，
+Docker Compose 方案保留為備用。
 
-啟動：
+### GitLab：透過 Kubernetes（預設）
+
+要沿用 Docker Compose 版的既有資料，先做一次遷移（來源只讀不刪）：
 
 ```bash
 cd gitlab
-./run.sh                 # 等同 docker compose up -d
+./run.sh docker stop     # 冷停，熱複製會得到不一致的資料
+k8s/migrate.sh           # 複製 config 與 data 到 k8s/data，logs 不遷
 ```
 
-其他操作：
+啟動與其他操作：
 
 ```bash
-./run.sh logs            # 跟隨 container log
-./run.sh status          # 查看狀態
-./run.sh stop            # 停止 GitLab
+./run.sh                 # 等同 k8s/apply.sh
+./run.sh logs            # 跟隨 pod log
+./run.sh status          # 查看 pod／service／pvc
+./run.sh stop            # 移除 Deployment（k8s/data 內的資料保留）
+```
+
+- 網頁：<http://localhost:8080>
+- SSH：`ssh -p 2222 git@localhost`
+- 取得 root 初始密碼（pod Ready 後可用，沿用既有資料時此檔可能已不存在）：
+
+  ```bash
+  kubectl -n devops exec deploy/gitlab -- cat /etc/gitlab/initial_root_password
+  ```
+
+- 持久化資料位置：`gitlab/k8s/data/{config,logs,data}`（已於 `.gitignore` 排除）
+
+> **`config/gitlab-secrets.json` 是遷移的關鍵**：資料庫內所有加密欄位（CI 變數、
+> 2FA、整合權杖）都靠它解密，漏掉它即使資料庫完整也等於報廢。`migrate.sh` 會連同
+> 整個 `config/` 一起複製，不要只挑 `data/` 搬。
+
+### GitLab：透過 Docker Compose（備用）
+
+```bash
+cd gitlab
+./run.sh docker          # 等同 docker compose up -d
+./run.sh docker logs     # 跟隨 container log
+./run.sh docker status   # 查看狀態
+./run.sh docker stop     # 停止 GitLab
 ```
 
 若需重新建置本地 image：
@@ -104,19 +176,12 @@ cd gitlab/docker
 ./build.sh               # 等同 docker compose build --pull
 ```
 
-存取資訊：
-
-- 網頁：<http://localhost:8080>
-- SSH：`ssh -p 2222 git@localhost`
-- 取得 root 初始密碼（容器啟動後可用）：
-
-  ```bash
-  docker exec gitlab cat /etc/gitlab/initial_root_password
-  ```
-
+- 取得 root 初始密碼：`docker exec gitlab cat /etc/gitlab/initial_root_password`
 - 持久化資料位置：`gitlab/docker/data/{config,logs,data}`（已於 `.gitignore` 排除）
 
-> 首次啟動 GitLab 需 3–5 分鐘完成自我初始化，期間 `docker ps` 會顯示 `health: starting`，請耐心等待。
+> 首次啟動 GitLab 需 3–5 分鐘完成自我初始化。K8s 方案下 pod 會停在 `0/1 Running`
+> 直到 readiness 探針通過；Docker Compose 方案下 `docker ps` 會顯示
+> `health: starting`。兩者都請耐心等待。
 
 > 資源設定（最小化）：已設容器記憶體上限 4G，並以單進程 Puma 運行、關閉內建
 > Registry（改用 Harbor）／KAS／Prometheus 監控，實測常駐約 3–3.3 GB（含 Gitaly
@@ -124,6 +189,13 @@ cd gitlab/docker
 > 用途；屬開發取向、非生產規格。
 
 ### macOS bind mount 的限制與因應
+
+> **這一節對兩套方案同樣適用。** K8s 方案的 hostPath PV 指向的是
+> `gitlab/k8s/data`，掛的仍是同一個 virtiofs，限制一項也沒少。因此
+> `03-deployment.yaml` 把 Compose 的六項 socket 覆寫原樣移植，五個 tmpfs 改用
+> `emptyDir{medium: Memory}`；`emptyDir` 無法像 docker tmpfs 那樣指定
+> uid/gid/mode，權限改由 initContainer 補上。setgid 的修正（第 3 項）同樣無法在
+> 容器內完成，改由 `k8s/apply.sh` 在 macOS 端執行。
 
 GitLab 的資料以 bind mount 掛到 `gitlab/docker/data`，而 macOS 上 Docker Desktop
 採 virtiofs 分享目錄，對 unix socket 檔案有三項限制：
@@ -179,9 +251,9 @@ Workhorse 與 Gitaly 原本留在掛載區，理由是「實測可自行重建�
 （`clean_stale_state()` 只刪 `-type s`）。確認服務正常後可一次性回收那約 129 MB：
 
 ```bash
-cd gitlab && ./run.sh stop
+cd gitlab && ./run.sh docker stop
 rm -rf docker/data/data/gitaly/run docker/data/data/gitlab-workhorse
-./run.sh
+./run.sh docker
 ```
 
 Rails 那一項的細節：GitLab 的 puma 本來就同時 bind unix socket 與
@@ -211,7 +283,7 @@ find gitlab/docker/data/data -type s         # 應無輸出（容器運行中也
 ```
 
 > 此不變式要等 `clean_stale_state()` 至少跑過一次才成立。套用上述設定變更時請走
-> `./run.sh stop && ./run.sh`——直接 `docker compose up -d` 雖然會 recreate 容器並
+> `./run.sh docker stop && ./run.sh docker`——直接 `docker compose up -d` 雖然會
 > 讓新設定生效，卻會把搬移前的孤兒 socket 原封不動留在掛載區，之後檢查這條不變式
 > 就會得到假警報。
 
@@ -228,8 +300,43 @@ docker exec gitlab sh -c 'mount | grep -E "/run/(gitlab-workhorse|gitaly)"'
 ## Harbor 部署
 
 Harbor 為私有 Container Registry，包含 8 個 service（registry / registryctl /
-postgresql / redis / core / portal / jobservice / proxy），與 GitLab 一樣以
-Docker Compose 部署，版本固定 `v2.15.2`。
+postgresql / redis / core / portal / jobservice / proxy），版本固定 `v2.15.2`，
+對外使用 8081 一個 port。**預設以 Kubernetes 部署**，Docker Compose 方案保留為備用。
+
+### Harbor：透過 Kubernetes（預設）
+
+首次啟動前必須先備妥 `k8s/data`，兩條路擇一：
+
+```bash
+cd harbor/k8s
+./migrate.sh             # 沿用 Docker Compose 版的既有資料（須先停掉 Compose 版）
+# 或
+./build.sh               # 全新建立：拉 image 並用 prepare 產生設定與金鑰
+```
+
+> 兩者**不可混用**：`build.sh` 會產生全新的加密金鑰，與既有資料庫的內容對不起來。
+> 已經有資料要沿用就只跑 `migrate.sh`。
+
+啟動與其他操作：
+
+```bash
+cd harbor
+./run.sh                 # 等同 k8s/apply.sh
+./run.sh logs            # 跟隨所有 pod 的 log
+./run.sh status          # 查看 pod／service／pvc
+./run.sh stop            # 移除 Deployment（k8s/data 內的資料保留）
+```
+
+- 網頁：<http://localhost:8081>
+- 持久化資料位置：`harbor/k8s/data/`（已於 `.gitignore` 排除）
+- 8 個 service 由 7 個 Deployment 承載（registry 與 registryctl 同一個 Pod），
+  對外則有 8 個 Service，全部位於 `devops` namespace
+
+> K8s 的 Service 名嚴格對齊 Compose 的 service 名（`core`、`redis`、`postgresql`…），
+> 因為 prepare 產生的設定裡寫的就是這些位址（`core:8080`、`redis:6379`）。
+> 改動 Service 名會讓整套設定失效。
+
+### Harbor：透過 Docker Compose（備用）
 
 首次啟動前必須先拉 image 並產生各 service 設定：
 
@@ -242,26 +349,28 @@ cd harbor/docker
 
 ```bash
 cd harbor
-./run.sh                 # 等同 docker compose up -d
+./run.sh docker          # 等同 docker compose up -d
 ```
 
 其他操作：
 
 ```bash
-./run.sh logs            # 跟隨所有 service log
-./run.sh status          # 查看狀態
-./run.sh stop            # 停止 Harbor
+./run.sh docker logs     # 跟隨所有 service log
+./run.sh docker status   # 查看狀態
+./run.sh docker stop     # 停止 Harbor
 ```
 
-存取資訊：
+- 持久化資料位置：`harbor/docker/data/`（已於 `.gitignore` 排除）
+
+### 共通存取資訊
 
 - 網頁：<http://localhost:8081>
 - 預設帳號：`admin` / `Harbor12345`
 - **⚠ 首次登入後請立即修改密碼。**
-- 持久化資料位置：`harbor/docker/data/`（已於 `.gitignore` 排除）
 
-> 修改 `harbor/docker/harbor.yml` 後，必須重新執行 `./build.sh` 讓 prepare 重生設定，
-> 再 `./run.sh stop && ./run.sh up` 才會生效。
+> 修改 `harbor/docker/harbor.yml` 後，必須重新執行對應方案的 `build.sh` 讓 prepare
+> 重生設定，再以對應方案 `stop` 後重新啟動才會生效。兩套方案共用同一份 `harbor.yml`
+> ——hostname、port 與 external_url 在兩邊完全相同，沒有需要分岔的欄位。
 
 實作上針對 macOS / Docker Desktop 環境做了三項穩定性處理（皆已內建於設定，平常無需手動介入）：
 
@@ -276,13 +385,50 @@ cd harbor
 ### 與 GitLab 同時啟動
 
 Harbor port 8081 已刻意錯開 GitLab 的 8080，兩者可同時運行（記憶體建議 ≥ 6 GB）。
+在 K8s 方案下兩者共用 `devops` namespace，以 `app.kubernetes.io/name` 標籤區分。
+
+> **注意**：`devops` 是共用的 namespace，`kubectl delete namespace devops` 會把
+> GitLab 與 Harbor 一起刪掉。兩邊的 `k8s/delete.sh` 因此一律以 label selector
+> 精確指定自己的資源，不碰 namespace 本身。
+
+### 在 devops 底下新增 Deployment 時
+
+**必須帶上 `enableServiceLinks: false`。** kubelet 預設會為同 namespace 內的
+每個 Service 注入一組環境變數（`CORE_PORT=tcp://10.x.x.x:8080`、
+`POSTGRESQL_PORT=…`、`GITLAB_PORT=…`），這些名稱很容易與應用程式自己的設定鍵
+撞名。導入本方案時就實際踩到：Harbor 的 `jobservice` 因為它的 env 檔沒有
+`POSTGRESQL_PORT`、注入值沒有東西可以覆蓋，讀到 `tcp://…:5432` 後在
+`strconv.Atoi` 失敗（`core` 剛好有這個鍵才逃過一劫）。
+
+這種污染**不會有任何警告**，Docker Compose 版也完全不會出現，因此排查時很難
+往這個方向想。現有 8 份 manifest 都帶了這個欄位，照著抄就不會漏；服務名越通用
+（`core`、`registry`、`redis`），撞名的機會越高。
 
 ---
 
 ## 開機自動啟動與自動修復
 
-Harbor 與 GitLab 於主機重開機後自動恢復，意外掛掉也會自動重啟。
-機制**完全依賴 Docker 內建能力**，不需要安裝任何常駐程式或排程工具。
+Harbor 與 GitLab 於主機重開機後自動恢復，意外掛掉也會自動重啟。兩套方案各有機制：
+
+| 方案 | 恢復機制 | 涵蓋範圍 |
+| --- | --- | --- |
+| Kubernetes（預設） | Deployment controller + 探針 | pod 掛掉重建；**探針失敗也會重建** |
+| Docker Compose（備用） | `restart: always` | 僅容器主行程退出時重啟 |
+
+差別在最後一欄：K8s 連「行程活著但服務死了」都救得回來，`restart: always` 不會。
+
+改用 K8s 作為預設方案的主因就在最後一欄：GitLab 曾發生過容器 `Up`、對外卻連續
+502 長達 6.5 天的事故，正是因為 runsvdir（PID 1）始終存活，`restart: always`
+從頭到尾都沒有介入的餘地（見[事故紀錄](#事故紀錄workhorse-與-gitaly-為何最後才搬)）。
+K8s 的 liveness 探針打的是 `/-/health`，這種「行程活著但服務死了」的狀態會被判定為
+失敗並重建 pod。
+
+以下這一整章描述的是**備用的 Docker Compose 方案**的機制，其設計約束仍然成立，
+維護 `docker/` 底下的設定時請一併遵守。K8s 方案不受這些限制（沒有 logging driver
+的跨容器依賴，啟動順序也由探針處理），但仍**需要 Docker Desktop 於登入時自啟**，
+否則 Kubernetes 叢集本身不會啟動。
+
+Docker Compose 方案的機制**完全依賴 Docker 內建能力**，不需要安裝任何常駐程式或排程工具。
 
 實測結果（2026-08-21，完整重啟 Docker Desktop 驗證，全程未執行任何救援指令）：
 
@@ -381,7 +527,7 @@ GitLab 的自癒比 Harbor 多一層：容器被拉起只是第一步，容器**
 真的卡住時，走一次完整流程讓 `run.sh` 的 socket 清理有機會執行：
 
 ```bash
-cd gitlab && ./run.sh stop && ./run.sh
+cd gitlab && ./run.sh docker stop && ./run.sh docker
 ```
 
 ### 查看 log
@@ -389,10 +535,20 @@ cd gitlab && ./run.sh stop && ./run.sh
 Harbor 不再有集中式的 `harbor/docker/data/log/*.log`（該目錄下的既有檔案為改版前的殘留，
 不再更新）。改用 Docker 原生方式：
 
+Kubernetes（預設）：
+
+```bash
+kubectl -n devops logs deploy/core --tail 50    # 單一 service
+kubectl -n devops logs -f deploy/gitlab         # 跟隨
+cd harbor && ./run.sh logs                      # 該服務全部 pod
+```
+
+Docker Compose（備用）：
+
 ```bash
 docker logs harbor-core --tail 50     # 單一容器
 docker logs -f gitlab                 # 跟隨
-cd harbor && ./run.sh logs            # 該服務全部容器
+cd harbor && ./run.sh docker logs     # 該服務全部容器
 ```
 
 ### 手動停用服務
@@ -402,12 +558,17 @@ cd harbor && ./run.sh logs            # 該服務全部容器
 把容器一併恢復——這正是 `always` 與 `unless-stopped` 的唯一差別，也是本專案選 `always` 的理由：
 只要曾經手動停過一次，`unless-stopped` 的容器就再也不會在重開機時自己回來。
 
-因此要長期停用某個服務，請用 `run.sh stop`（等同 `docker compose down`），
-容器被移除後就完全不受 restart policy 影響：
+因此要長期停用某個服務，請用 `run.sh stop`，容器／pod 被移除後就完全不受 restart
+policy 或 Deployment controller 影響：
 
 ```bash
-cd harbor && ./run.sh stop
+cd harbor && ./run.sh stop           # Kubernetes：移除 Deployment（資料保留）
+cd harbor && ./run.sh docker stop    # Docker Compose：等同 docker compose down
 ```
+
+這一整段（含下方的崩潰自愈測試）談的是 Docker Compose 方案的 restart policy。
+K8s 方案下對應的機制是 Deployment controller：`kubectl delete pod` 會被立刻重建，
+要真正停用只能移除 Deployment 本身，也就是 `./run.sh stop` 做的事。
 
 > 同理，`docker kill` 無法用來測試崩潰自愈——它會被視為手動停止。
 > 要模擬真正的意外退出，請從容器**內部**把主行程結束掉：
@@ -426,23 +587,49 @@ cd harbor && ./run.sh stop
 
 ## 使用方式
 
-各工具皆預期提供 `run.sh` 作為啟動入口，使用方式如下：
+各工具皆提供 `run.sh` 作為啟動入口。**預設方案為 Kubernetes**，要操作備用的
+Docker Compose 方案就在動作前加上 `docker`：
 
 ```bash
-# 啟動 GitLab
+# 啟動 GitLab（Kubernetes）
 cd gitlab
 ./run.sh
 
-# 啟動 Harbor（首次須先 ./docker/build.sh）
+# 啟動 Harbor（Kubernetes；首次須先 ./k8s/migrate.sh 或 ./k8s/build.sh）
 cd harbor
 ./run.sh
+
+# 改用 Docker Compose 啟動（首次須先 ./docker/build.sh）
+./run.sh docker
 ```
+
+四個動作在兩套方案下語意相同：
+
+| 動作 | Kubernetes（預設） | Docker Compose（`./run.sh docker …`） |
+| --- | --- | --- |
+| `up`（可省略） | `k8s/apply.sh` | `docker compose up -d` |
+| `logs` | `kubectl logs -f` | `docker compose logs -f` |
+| `stop` | `k8s/delete.sh`（資料保留） | `docker compose down` |
+| `status` | `kubectl get pods,svc,pvc` | `docker compose ps` |
+
+> 兩套方案搶同一組 port（GitLab 8080／2222、Harbor 8081），**同一時間只能啟動其中一套**。
+> `k8s/apply.sh` 會在啟動前檢查這些 port 是否已被佔用，衝突時直接擋下；
+> 佔用者是 Compose 版時另外提示對應的停止指令。
 
 ## 版本升級
 
-各服務的映像版本釘選在各自的 `docker/Dockerfile`（Harbor 另有 `docker-compose.yaml`
-與 `build.sh` 中的 `HARBOR_VERSION`）。升級一律「改檔 → `./docker/build.sh` →
-`./run.sh`」，並在升級前備份對應的 `docker/data/` 目錄到 repo 之外。
+映像版本在兩套方案中各有釘選位置，升級時**必須同時改**，否則兩邊會跑在不同版本上：
+
+| 服務 | 方案 | 釘選位置 |
+| --- | --- | --- |
+| GitLab | K8s | `k8s/03-deployment.yaml` 的**兩處** `image`（initContainer 與主容器） |
+| GitLab | Compose | `docker/Dockerfile` 的 `FROM` |
+| Harbor | K8s | `k8s/1*.yaml` 的各 `image`、`k8s/build.sh` 的 `HARBOR_VERSION` |
+| Harbor | Compose | `docker/docker-compose.yaml` 的 8 個 tag 與 `build.sh` |
+
+升級流程：K8s 走「改檔 → `./run.sh stop` → `./run.sh`」；Docker Compose 走
+「改檔 → `./docker/build.sh` → `./run.sh docker`」。無論走哪一套，升級前都要把對應的
+`data/` 目錄備份到 repo 之外。
 
 ### GitLab
 
@@ -453,9 +640,11 @@ repo 的 `config/upgrade_path.yml` 為準（19.x 為 19.2、19.5、19.8、19.11�
 升級前確認背景遷移已全數完成，否則新版遷移會與未完成的舊遷移衝突：
 
 ```bash
-docker exec gitlab gitlab-rails runner \
+kubectl -n devops exec deploy/gitlab -- gitlab-rails runner \
   'puts Gitlab::Database::BackgroundMigration::BatchedMigration.where.not(status: 3).count'
 ```
+
+> Docker Compose 方案下把前綴換成 `docker exec gitlab`，後面的參數完全相同。
 
 升級後同樣以上述指令確認收斂為 `0`（大版本升級後背景遷移可能持續數十分鐘）。
 
@@ -478,11 +667,18 @@ v2.11.0 直上 v2.15.2，未逐版停留）。但**跨過的每一版都可能�
   列表載入不完、robot 帳號權限異常，升級後應重建索引：
 
   ```bash
+  # Kubernetes（預設）
+  kubectl -n devops exec deploy/postgresql -- reindexdb --all --username postgres
+
+  # Docker Compose（備用）
   docker exec harbor-db reindexdb --all --username postgres
   ```
 
-升級期間請用 `./run.sh stop`（`docker compose down`）停用服務。容器被移除後不受
-`restart: always` 影響，不會在流程中途被 daemon 拉回；升級完成後再 `./run.sh` 啟動。
+  備份對象同樣要看方案：K8s 是 `harbor/k8s/data`，Docker Compose 是 `harbor/docker/data`。
+
+升級期間請用 `./run.sh stop` 停用服務。K8s 方案下這會移除 Deployment，pod 不再被
+controller 重建；Docker Compose 方案下等同 `docker compose down`，容器被移除後不受
+`restart: always` 影響。兩者都不會在流程中途被拉回；升級完成後再 `./run.sh` 啟動。
 
 ## 授權
 

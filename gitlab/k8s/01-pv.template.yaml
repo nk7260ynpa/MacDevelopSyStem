@@ -1,0 +1,72 @@
+# GitLab 三組 hostPath PersistentVolume（範本）。
+#
+# __GITLAB_DATA__ 是佔位符，由 apply.sh 以 sed 換成 gitlab/k8s/data 的絕對路徑後
+# 才送給 kubectl。不把路徑寫死在版控檔裡，repo 才能 clone 到任意位置。
+#
+# 為什麼用靜態 hostPath 而不是叢集預設的 StorageClass：
+#   預設 StorageClass 會把資料放進節點自己管理的目錄，macOS 端看不到也備份不到。
+#   本專案的既定設計是「資料落在 macOS 本機、可直接備份與遷移」（見 README
+#   〈資料持久化設計〉），故一律綁到 k8s/data 底下的實體目錄。
+#
+# storageClassName: manual —— 停用動態 provisioner，改由 02-pvc.yaml 以
+# volumeName 明確綁定下列 PV。
+#
+# reclaimPolicy: Retain —— 刪掉 PVC/PV 不會清掉 k8s/data 內的實際資料。
+#
+# 注意：hostPath 指向的是 macOS 的 virtiofs 掛載，不支援對 unix socket
+# unlink/chmod，也不保留 setgid。03-deployment.yaml 因此把所有 socket 移到
+# emptyDir，apply.sh 則在 macOS 端修正 repositories 的權限。詳見 README。
+---
+apiVersion: v1
+kind: PersistentVolume
+metadata:
+  name: gitlab-config-pv
+  labels:
+    app.kubernetes.io/name: gitlab
+    app.kubernetes.io/part-of: macdevelopsystem
+spec:
+  storageClassName: manual
+  persistentVolumeReclaimPolicy: Retain
+  accessModes:
+    - ReadWriteOnce
+  capacity:
+    storage: 1Gi
+  hostPath:
+    path: __GITLAB_DATA__/config
+    type: DirectoryOrCreate
+---
+apiVersion: v1
+kind: PersistentVolume
+metadata:
+  name: gitlab-logs-pv
+  labels:
+    app.kubernetes.io/name: gitlab
+    app.kubernetes.io/part-of: macdevelopsystem
+spec:
+  storageClassName: manual
+  persistentVolumeReclaimPolicy: Retain
+  accessModes:
+    - ReadWriteOnce
+  capacity:
+    storage: 2Gi
+  hostPath:
+    path: __GITLAB_DATA__/logs
+    type: DirectoryOrCreate
+---
+apiVersion: v1
+kind: PersistentVolume
+metadata:
+  name: gitlab-data-pv
+  labels:
+    app.kubernetes.io/name: gitlab
+    app.kubernetes.io/part-of: macdevelopsystem
+spec:
+  storageClassName: manual
+  persistentVolumeReclaimPolicy: Retain
+  accessModes:
+    - ReadWriteOnce
+  capacity:
+    storage: 32Gi
+  hostPath:
+    path: __GITLAB_DATA__/data
+    type: DirectoryOrCreate

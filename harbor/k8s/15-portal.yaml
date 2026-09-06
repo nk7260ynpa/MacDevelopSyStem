@@ -1,0 +1,91 @@
+# Portal（Web UI 的靜態資源，由自帶的 nginx 提供）。
+#
+# 只掛一個檔案（nginx.conf），沒有 env——與 Docker Compose 方案相同。
+#
+# Service 名必須是 portal：proxy 的 nginx.conf 內是 upstream portal:8080。
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: portal
+  namespace: devops
+  labels:
+    app.kubernetes.io/name: harbor
+    app.kubernetes.io/component: portal
+    app.kubernetes.io/part-of: macdevelopsystem
+spec:
+  replicas: 1
+  strategy:
+    type: Recreate
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: harbor
+      app.kubernetes.io/component: portal
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: harbor
+        app.kubernetes.io/component: portal
+        app.kubernetes.io/part-of: macdevelopsystem
+    spec:
+      # 停用 K8s 自動注入的 Service 環境變數。
+      # kubelet 預設會為同 namespace 內的每個 Service 注入一組變數，例如
+      # POSTGRESQL_PORT=tcp://10.x.x.x:5432、CORE_PORT=…、GITLAB_PORT=…。
+      # 這些名稱與 Harbor 自己設定檔用的鍵直接撞名：實測 jobservice 因此讀到
+      # POSTGRESQL_PORT=tcp://…:5432 而在 strconv.Atoi 失敗
+      # （env 檔沒有這個鍵時就沒有東西可以覆蓋它）。Docker Compose 版沒有這種
+      # 注入，關掉才能讓兩套方案的環境完全一致。
+      enableServiceLinks: false
+      containers:
+        - name: portal
+          image: goharbor/harbor-portal:v2.15.2
+          imagePullPolicy: IfNotPresent
+          securityContext:
+            capabilities:
+              drop: ["ALL"]
+              add: ["CHOWN", "SETGID", "SETUID", "NET_BIND_SERVICE"]
+          ports:
+            - name: portal
+              containerPort: 8080
+          volumeMounts:
+            - name: data
+              mountPath: /etc/nginx/nginx.conf
+              subPath: config/portal/nginx.conf
+          readinessProbe:
+            tcpSocket:
+              port: portal
+            initialDelaySeconds: 10
+            periodSeconds: 15
+          livenessProbe:
+            tcpSocket:
+              port: portal
+            initialDelaySeconds: 30
+            periodSeconds: 30
+          resources:
+            requests:
+              cpu: "25m"
+              memory: "32Mi"
+            limits:
+              memory: "128Mi"
+      volumes:
+        - name: data
+          persistentVolumeClaim:
+            claimName: harbor-data
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: portal
+  namespace: devops
+  labels:
+    app.kubernetes.io/name: harbor
+    app.kubernetes.io/component: portal
+    app.kubernetes.io/part-of: macdevelopsystem
+spec:
+  selector:
+    app.kubernetes.io/name: harbor
+    app.kubernetes.io/component: portal
+  ports:
+    - name: portal
+      port: 8080
+      targetPort: portal

@@ -1,0 +1,14 @@
+# 本專案所有 K8s 資源共用的 namespace。
+#
+# GitLab 與 Harbor 一律部署於 devops，兩邊各自保留一份內容相同的定義，
+# 讓任一服務都能獨立 apply（kubectl apply 是冪等的，重複套用不會出錯）。
+#
+# 因為是共用的，delete.sh 絕對不可以用 `kubectl delete namespace devops`
+# ——那會把另一個服務一起殺掉。移除一律以 label selector 精確指定。
+---
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: devops
+  labels:
+    app.kubernetes.io/part-of: macdevelopsystem

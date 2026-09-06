@@ -1,0 +1,92 @@
+# Redis（快取與 jobservice 任務佇列）。
+#
+# Harbor v2.15.2 起後端由 Redis 換成 Valkey，映像名亦隨之從 goharbor/redis-photon
+# 改為 goharbor/valkey-photon（v2.15.1 為最後一版 redis-photon）。官方樣板仍沿用
+# redis 作為 service 名與資料路徑（/var/lib/redis），此處比照辦理——各 service 的
+# 設定檔裡的連線位址是 redis:6379，Service 名必須完全對上才解析得到。
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: redis
+  namespace: devops
+  labels:
+    app.kubernetes.io/name: harbor
+    app.kubernetes.io/component: redis
+    app.kubernetes.io/part-of: macdevelopsystem
+spec:
+  replicas: 1
+  strategy:
+    type: Recreate
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: harbor
+      app.kubernetes.io/component: redis
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: harbor
+        app.kubernetes.io/component: redis
+        app.kubernetes.io/part-of: macdevelopsystem
+    spec:
+      # 停用 K8s 自動注入的 Service 環境變數。
+      # kubelet 預設會為同 namespace 內的每個 Service 注入一組變數，例如
+      # POSTGRESQL_PORT=tcp://10.x.x.x:5432、CORE_PORT=…、GITLAB_PORT=…。
+      # 這些名稱與 Harbor 自己設定檔用的鍵直接撞名：實測 jobservice 因此讀到
+      # POSTGRESQL_PORT=tcp://…:5432 而在 strconv.Atoi 失敗
+      # （env 檔沒有這個鍵時就沒有東西可以覆蓋它）。Docker Compose 版沒有這種
+      # 注入，關掉才能讓兩套方案的環境完全一致。
+      enableServiceLinks: false
+      containers:
+        - name: redis
+          image: goharbor/valkey-photon:v2.15.2
+          imagePullPolicy: IfNotPresent
+          securityContext:
+            capabilities:
+              drop: ["ALL"]
+              add: ["CHOWN", "SETGID", "SETUID"]
+          ports:
+            - name: redis
+              containerPort: 6379
+          volumeMounts:
+            - name: data
+              mountPath: /var/lib/redis
+              subPath: redis
+          readinessProbe:
+            tcpSocket:
+              port: redis
+            initialDelaySeconds: 10
+            periodSeconds: 15
+          livenessProbe:
+            tcpSocket:
+              port: redis
+            initialDelaySeconds: 30
+            periodSeconds: 30
+          resources:
+            requests:
+              cpu: "25m"
+              memory: "64Mi"
+            limits:
+              memory: "256Mi"
+      volumes:
+        - name: data
+          persistentVolumeClaim:
+            claimName: harbor-data
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: redis
+  namespace: devops
+  labels:
+    app.kubernetes.io/name: harbor
+    app.kubernetes.io/component: redis
+    app.kubernetes.io/part-of: macdevelopsystem
+spec:
+  selector:
+    app.kubernetes.io/name: harbor
+    app.kubernetes.io/component: redis
+  ports:
+    - name: redis
+      port: 6379
+      targetPort: redis

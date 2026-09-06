@@ -6,7 +6,7 @@
 # 對外 port：8081 -> proxy:8080（HTTP）
 # 各 service 的設定檔由 ./build.sh 透過 goharbor/prepare image 從
 # harbor.yml 產生至 ./data/config/<service>/，請務必先執行 ./build.sh
-# 再以 ../run.sh 或 docker compose up -d 啟動。
+# 再以 ../run.sh docker 或 docker compose up -d 啟動。
 #
 # 重要設計：
 #   - 以 name: harbor 固定 compose 專案名，避免與其他同樣放在 docker/ 目錄、
@@ -17,7 +17,7 @@
 #     故容器啟動時不得依賴其他容器就緒。早期版本改用 syslog driver 送往
 #     harbor-log 的 1514 埠，正因此在 daemon 恢復時連不上而集體 exit 128，
 #     必須另設守護巡檢才能補救；改為 json-file 後 restart: always 即可獨立自愈。
-#     查看 log 改用 docker logs <容器> 或 ../run.sh logs。
+#     查看 log 改用 docker logs <容器> 或 ../run.sh docker logs。
 name: harbor
 
 services:
