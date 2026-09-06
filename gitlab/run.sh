@@ -3,20 +3,24 @@
 # GitLab 啟動入口。
 #
 # 用法：
-#   ./run.sh           # 啟動（背景模式）
-#   ./run.sh logs      # 跟隨 container log
-#   ./run.sh stop      # 停止 GitLab
-#   ./run.sh status    # 查看狀態
+#   ./run.sh              # 啟動（Kubernetes，預設方案）
+#   ./run.sh logs         # 跟隨 pod log
+#   ./run.sh stop         # 移除 K8s 資源（k8s/data 內的資料保留）
+#   ./run.sh status       # 查看 pod 狀態
+#   ./run.sh docker       # 改以 Docker Compose 啟動（備用方案）
+#   ./run.sh docker logs  # Docker Compose 的 log，stop／status 同理
 #
-# 採用 Docker Compose 方案，設定位於 ./docker/。
+# 預設方案為 Kubernetes，設定位於 ./k8s/：Deployment 的 controller 會在 pod
+# 掛掉時自動重建，補上 restart: always 只看主行程存活的不足。
+# Docker Compose 方案保留於 ./docker/ 作為備用，兩者資料各自獨立。
+#
+# 兩套方案搶同一組 port（8080／2222），同一時間只能啟動其中一套。
 
 set -euo pipefail
 
 readonly SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 readonly DOCKER_DIR="${SCRIPT_DIR}/docker"
-
-# 持久化資料夾，以 bind mount 掛入容器。
-mkdir -p "${DOCKER_DIR}/data"/{config,logs,data}
+readonly K8S_DIR="${SCRIPT_DIR}/k8s"
 
 #######################################
 # 清除前次執行殘留的 unix socket 與修正 git-data 權限。
@@ -82,34 +86,106 @@ clean_stale_state() {
   fi
 }
 
-cd "${DOCKER_DIR}"
+#######################################
+# 以 Docker Compose 方案執行指定動作（備用方案）。
+# Globals:
+#   DOCKER_DIR
+# Arguments:
+#   動作名稱：up／logs／stop／status
+# Outputs:
+#   各動作的執行結果；未知動作輸出用法並回傳 1
+#######################################
+run_docker() {
+  local action="$1"
+
+  # 持久化資料夾，以 bind mount 掛入容器。
+  mkdir -p "${DOCKER_DIR}/data"/{config,logs,data}
+  cd "${DOCKER_DIR}"
+
+  case "${action}" in
+    up|"")
+      clean_stale_state
+      echo "[run.sh] 以 Docker Compose 啟動 GitLab（首次啟動需 3-5 分鐘完成初始化）..."
+      docker compose up -d
+      echo ""
+      echo "[run.sh] 已啟動。"
+      echo "  存取 URL：http://localhost:8080"
+      echo "  SSH：    ssh -p 2222 git@localhost"
+      echo "  root 初始密碼："
+      echo "    docker exec gitlab cat /etc/gitlab/initial_root_password"
+      echo "  跟隨 log：./run.sh docker logs"
+      ;;
+    logs)
+      docker compose logs -f
+      ;;
+    stop|down)
+      docker compose down
+      ;;
+    status|ps)
+      docker compose ps
+      ;;
+    *)
+      echo "用法：$0 docker {up|logs|stop|status}" >&2
+      return 1
+      ;;
+  esac
+}
+
+#######################################
+# 以 Kubernetes 方案執行指定動作（預設方案）。
+#
+# up 與 stop 委由 k8s/apply.sh 與 k8s/delete.sh 處理——前置檢查（佈建方式、
+# port 衝突、socket 殘留）都寫在那裡，這裡只負責轉發。
+# Globals:
+#   K8S_DIR
+# Arguments:
+#   動作名稱：up／logs／stop／status
+# Outputs:
+#   各動作的執行結果；未知動作輸出用法並回傳 1
+#######################################
+run_k8s() {
+  local action="$1"
+  local namespace="devops"
+  local selector="app.kubernetes.io/name=gitlab"
+
+  case "${action}" in
+    up|"")
+      "${K8S_DIR}/apply.sh"
+      ;;
+    logs)
+      kubectl -n "${namespace}" logs -f -l "${selector}" --tail=100
+      ;;
+    stop|down)
+      "${K8S_DIR}/delete.sh"
+      ;;
+    status|ps)
+      kubectl -n "${namespace}" get pods,svc,pvc -l "${selector}"
+      ;;
+    *)
+      echo "用法：$0 [docker|k8s] {up|logs|stop|status}" >&2
+      return 1
+      ;;
+  esac
+}
+
+# 第一個參數若是方案名就當方案用並移除，否則沿用預設的 k8s。
+# 這樣既有的 `./run.sh logs`／`./run.sh stop` 等用法不必改寫，只是改為作用在
+# K8s 上；要操作 Docker Compose 版就明確寫成 `./run.sh docker logs`。
+mode="k8s"
+case "${1:-}" in
+  docker|k8s)
+    mode="$1"
+    shift
+    ;;
+esac
 
 action="${1:-up}"
 
-case "${action}" in
-  up|"")
-    clean_stale_state
-    echo "[run.sh] 啟動 GitLab（首次啟動需 3-5 分鐘完成初始化）..."
-    docker compose up -d
-    echo ""
-    echo "[run.sh] 已啟動。"
-    echo "  存取 URL：http://localhost:8080"
-    echo "  SSH：    ssh -p 2222 git@localhost"
-    echo "  root 初始密碼："
-    echo "    docker exec gitlab cat /etc/gitlab/initial_root_password"
-    echo "  跟隨 log：./run.sh logs"
+case "${mode}" in
+  k8s)
+    run_k8s "${action}"
     ;;
-  logs)
-    docker compose logs -f
-    ;;
-  stop|down)
-    docker compose down
-    ;;
-  status|ps)
-    docker compose ps
-    ;;
-  *)
-    echo "用法：$0 {up|logs|stop|status}" >&2
-    exit 1
+  docker)
+    run_docker "${action}"
     ;;
 esac
