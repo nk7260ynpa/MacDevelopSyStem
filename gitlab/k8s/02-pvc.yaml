@@ -1,0 +1,62 @@
+# GitLab 三組 PersistentVolumeClaim。
+#
+#   - gitlab-config：對應 /etc/gitlab，存放 gitlab.rb 與 gitlab-secrets.json
+#   - gitlab-logs  ：對應 /var/log/gitlab，各元件 log
+#   - gitlab-data  ：對應 /var/opt/gitlab，Repository、PostgreSQL、Redis 實際資料
+#
+# volumeName 明確指定要綁的 PV：storageClassName 為 manual 時雖然不會觸發動態
+# 建立，但同一個 StorageClass 下若有多個容量相符的 PV，binder 仍可能綁錯一組
+# （例如 config 綁到 logs）。明寫 volumeName 讓對應關係一眼可見且不會錯配。
+#
+# capacity 僅為 K8s 的記帳數字，hostPath 實際可用空間以 macOS 磁碟為準，
+# 不會真的被限制在這裡宣告的大小。
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: gitlab-config
+  namespace: devops
+  labels:
+    app.kubernetes.io/name: gitlab
+    app.kubernetes.io/part-of: macdevelopsystem
+spec:
+  storageClassName: manual
+  volumeName: gitlab-config-pv
+  accessModes:
+    - ReadWriteOnce
+  resources:
+    requests:
+      storage: 1Gi
+---
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: gitlab-logs
+  namespace: devops
+  labels:
+    app.kubernetes.io/name: gitlab
+    app.kubernetes.io/part-of: macdevelopsystem
+spec:
+  storageClassName: manual
+  volumeName: gitlab-logs-pv
+  accessModes:
+    - ReadWriteOnce
+  resources:
+    requests:
+      storage: 2Gi
+---
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: gitlab-data
+  namespace: devops
+  labels:
+    app.kubernetes.io/name: gitlab
+    app.kubernetes.io/part-of: macdevelopsystem
+spec:
+  storageClassName: manual
+  volumeName: gitlab-data-pv
+  accessModes:
+    - ReadWriteOnce
+  resources:
+    requests:
+      storage: 32Gi
