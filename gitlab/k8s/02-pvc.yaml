@@ -10,6 +10,7 @@
 #
 # capacity 僅為 K8s 的記帳數字，hostPath 實際可用空間以 macOS 磁碟為準，
 # 不會真的被限制在這裡宣告的大小。
+---
 apiVersion: v1
 kind: PersistentVolumeClaim
 metadata:

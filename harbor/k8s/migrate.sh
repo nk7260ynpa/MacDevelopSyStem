@@ -22,11 +22,14 @@ if [[ ! -d "${SRC_DIR}/config/core" ]]; then
   exit 1
 fi
 
-# 必須在容器停止的狀態下複製：PostgreSQL 執行中時隨時在寫檔，熱複製會得到
-# 不一致的快照（DB 檔與 WAL 對不起來），還原後可能整個起不來。
-running="$(docker ps --filter 'name=^harbor-db$' --filter 'status=running' --quiet 2>/dev/null || true)"
+# 必須在所有容器停止的狀態下複製。會寫檔的不只 PostgreSQL：registry 寫 blob、
+# redis 寫 RDB 與 jobservice 佇列、core 寫 /data，任何一個還活著都可能讓複製出來
+# 的快照彼此對不起來（最典型的是 DB 檔與 WAL 不一致），還原後整套起不來。
+running="$(docker ps --filter 'status=running' --format '{{.Names}}' 2>/dev/null |
+  grep -xE 'harbor-core|harbor-db|harbor-jobservice|harbor-portal|registry|registryctl|redis|nginx' || true)"
 if [[ -n "${running}" ]]; then
-  echo "[migrate.sh] 錯誤：Docker Compose 版的 Harbor 仍在運行，熱複製會得到不一致的資料。" >&2
+  echo "[migrate.sh] 錯誤：Docker Compose 版的 Harbor 仍有容器在運行，熱複製會得到不一致的資料。" >&2
+  echo "  仍在運行：$(echo "${running}" | tr '\n' ' ')" >&2
   echo "  請先執行：../run.sh docker stop" >&2
   exit 1
 fi

@@ -3,6 +3,7 @@
 # 只掛一個檔案（nginx.conf），沒有 env——與 Docker Compose 方案相同。
 #
 # Service 名必須是 portal：proxy 的 nginx.conf 內是 upstream portal:8080。
+---
 apiVersion: apps/v1
 kind: Deployment
 metadata:

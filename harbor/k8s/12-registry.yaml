@@ -9,6 +9,7 @@
 # root.crt 直接放在 registry 設定目錄內、靠整個目錄掛載一併帶入
 # /etc/registry/root.crt，與 Docker Compose 方案的做法一致（build.sh 會把它從
 # secret/registry/ 複製過去）。
+---
 apiVersion: apps/v1
 kind: Deployment
 metadata:

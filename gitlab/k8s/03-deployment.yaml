@@ -11,6 +11,7 @@
 #
 #   strategy: Recreate —— 滾動更新會讓新舊 pod 同時存在，兩者搶同一個 RWO PVC
 #   必定卡住；先關舊的再開新的才走得通。
+---
 apiVersion: apps/v1
 kind: Deployment
 metadata:
@@ -42,7 +43,9 @@ spec:
       # reconfigure 才會判定為已就緒而不再去動它（也就不會多送一次 notifies :restart）。
       initContainers:
         - name: init-runtime-dirs
-          image: busybox:1.36
+          # 刻意與主容器用同一個 image：節點上本來就有，不必為了 chown 這幾行
+          # 多拉一個外部 image，也就沒有額外的版本要跟進。
+          image: gitlab/gitlab-ce:19.2.4-ce.0
           imagePullPolicy: IfNotPresent
           securityContext:
             runAsUser: 0
@@ -53,14 +56,21 @@ spec:
               set -eux
               # PostgreSQL／Redis：socket 由 omnibus 以 unixsocketperm 777 建立，
               # 目錄給 0755 讓以 git 執行的 Rails、Sidekiq、Workhorse 進得去。
-              chown 996:996 /run/postgresql      && chmod 0755 /run/postgresql
-              chown 997:997 /run/gitlab-redis    && chmod 0755 /run/gitlab-redis
-              # Workhorse：連線方是以 gitlab-www 執行的 nginx，故 group 給 gitlab-www。
-              chown 998:999 /run/gitlab-workhorse && chmod 0750 /run/gitlab-workhorse
-              # Gitaly socket：連線方只有以 git 執行的 Rails／Sidekiq／gitlab-shell。
-              # 這個目錄在 omnibus 裡沒有對應的 Chef directory 資源，權限完全由這裡決定。
-              chown 998:998 /run/gitaly          && chmod 0700 /run/gitaly
-              chown 998:998 /run/gitaly-runtime  && chmod 0700 /run/gitaly-runtime
+              chown 996:996 /run/postgresql
+              chmod 0755 /run/postgresql
+              chown 997:997 /run/gitlab-redis
+              chmod 0755 /run/gitlab-redis
+              # Workhorse：連線方是以 gitlab-www 執行的 nginx，
+              # 故 group 給 gitlab-www。
+              chown 998:999 /run/gitlab-workhorse
+              chmod 0750 /run/gitlab-workhorse
+              # Gitaly socket：連線方只有以 git 執行的 Rails／Sidekiq／
+              # gitlab-shell。這個目錄在 omnibus 裡沒有對應的 Chef directory
+              # 資源，權限完全由這裡決定。
+              chown 998:998 /run/gitaly
+              chmod 0700 /run/gitaly
+              chown 998:998 /run/gitaly-runtime
+              chmod 0700 /run/gitaly-runtime
           volumeMounts:
             - name: run-postgresql
               mountPath: /run/postgresql
@@ -94,8 +104,9 @@ spec:
               # 只有標示「K8s 專屬」的那一項是 Compose 沒有的。改動時請兩邊一起改。
               value: |
                 external_url 'http://localhost:8080'
-                # 讓容器內 nginx 聽 80，對齊 containerPort http=80 與 Service 的 targetPort；
-                # 否則 nginx 會依 external_url 預設聽 8080，導致對外流量與探針都打不到。
+                # 讓容器內 nginx 聽 80，對齊 containerPort http=80 與 Service
+                # 的 targetPort；否則 nginx 會依 external_url 預設聽 8080，
+                # 導致對外流量與探針都打不到。
                 nginx['listen_port'] = 80
                 # K8s 專屬：/-/health|readiness|liveness 預設僅允許 127.0.0.0/8，
                 # 而 kubelet 探針的來源是節點／Pod 網段（非 loopback），未放行會回 404
@@ -134,14 +145,15 @@ spec:
                 # gitlab-shell 與 gitaly 的 gitlab.url 都由同一組值衍生。
                 gitlab_workhorse['sockets_directory'] = '/run/gitlab-workhorse'
                 # gitaly['configuration'] 是 hash，這裡只給部分 key 不會蓋掉套件預設值：
-                # 設定經 node.consume_attributes 寫進 normal 層，與 attributes/default.rb
-                # 的 default 層由 Chef 的 hash_only_merge 遞迴合併。
+                # 設定經 node.consume_attributes 寫進 normal 層，與
+                # attributes/default.rb 的 default 層由 Chef 的
+                # hash_only_merge 遞迴合併。
                 gitaly['configuration'] = {
                   socket_path: '/run/gitaly/gitaly.socket',
                   runtime_dir: '/run/gitaly-runtime',
                 }
-                registry['enable'] = false            # 已有獨立 Harbor，關閉內建 registry
-                gitlab_kas['enable'] = false          # 關閉 K8s Agent Server
+                registry['enable'] = false      # 已有 Harbor，關閉內建 registry
+                gitlab_kas['enable'] = false    # 關閉 K8s Agent Server
           volumeMounts:
             - name: config
               mountPath: /etc/gitlab
@@ -171,22 +183,33 @@ spec:
             # 加 /dev/shm 最多約 800Mi，調整 sizeLimit 時要一併考慮。
             limits:
               memory: "4Gi"
-          # 首次啟動需 3-5 分鐘完成自我初始化，故 initialDelaySeconds 設得長。
-          # liveness 比 readiness 寬鬆很多：探針一旦誤判就會重啟 pod，而 GitLab
-          # 重啟一次要好幾分鐘，寧可慢一點發現也不要在初始化途中被砍掉。
+          # startupProbe 負責涵蓋整個初始化期間，通過之前 readiness 與 liveness
+          # 都不會執行。這是必要的：首次啟動需 3-5 分鐘自我初始化，而以遷移過來的
+          # 資料冷啟動、走 virtiofs 且快取全冷時可能更久。少了它就只能把 liveness
+          # 的 initialDelaySeconds 開得很大來遷就，一旦估得不夠就會在 reconfigure
+          # 中途把 pod 砍掉重來，症狀看起來會很像 virtiofs 事故、極難定位。
+          # 30s x 60 = 最多容忍 30 分鐘。
+          startupProbe:
+            httpGet:
+              path: /-/health
+              port: http
+            periodSeconds: 30
+            timeoutSeconds: 10
+            failureThreshold: 60
           readinessProbe:
             httpGet:
               path: /-/readiness
               port: http
-            initialDelaySeconds: 180
             periodSeconds: 30
             timeoutSeconds: 10
             failureThreshold: 10
+          # 有了 startupProbe 之後 liveness 不必再遷就初始化時間，可以收緊到
+          # 「連續 5 分鐘無回應才重建」——這正是 restart: always 救不了、
+          # 而改用 K8s 要解決的那種「行程活著但服務死了」的狀態。
           livenessProbe:
             httpGet:
               path: /-/health
               port: http
-            initialDelaySeconds: 600
             periodSeconds: 60
             timeoutSeconds: 10
             failureThreshold: 5

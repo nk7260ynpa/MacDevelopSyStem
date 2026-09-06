@@ -12,6 +12,7 @@
 #   proxy                  → config/nginx
 #
 # volumeName 明確綁定 01-pv.template.yaml 產生的 PV，避免綁到別的 manual PV。
+---
 apiVersion: v1
 kind: PersistentVolumeClaim
 metadata:

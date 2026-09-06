@@ -49,23 +49,45 @@ check_hostpath_support() {
 }
 
 #######################################
-# 確認對外 port 未被 Docker Compose 版佔用。
+# 確認對外 port 未被其他程式佔用。
 #
 # K8s 的 Service 走 LoadBalancer 綁 localhost:8080 與 localhost:2222，與 Compose
-# 版完全相同。Compose 版若還在跑，LoadBalancer 會因 port 被佔而永遠拿不到位址。
+# 版完全相同。port 若已被佔，LoadBalancer 會靜默地停在 <pending> 永遠拿不到位址
+# ——沒有錯誤訊息，只是連不上，故在此先擋下來。
+#
+# 以實際佔埠情形判斷而非只看容器名：8080 這種常見 port 被其他開發服務佔用的
+# 機會不低，只查 Compose 版容器會漏掉。確認是 Compose 版佔的話另外給明確指令。
 # Globals:
-#   無
+#   NAMESPACE
 # Arguments:
 #   無
 # Outputs:
 #   偵測到衝突時輸出錯誤訊息並回傳 1
 #######################################
 check_port_conflict() {
-  local running
-  running="$(docker ps --filter 'name=^gitlab$' --filter 'status=running' --quiet 2>/dev/null || true)"
-  if [[ -n "${running}" ]]; then
-    echo "[apply.sh] 錯誤：Docker Compose 版的 GitLab 仍在運行，會搶走 8080／2222。" >&2
-    echo "  請先執行：../run.sh docker stop" >&2
+  # 自己已經部署過就跳過：重複執行 apply.sh 是冪等操作，此時這兩個 port 本來
+  # 就被自己的 LoadBalancer 佔著，不該把它判成衝突。
+  if kubectl -n "${NAMESPACE}" get service gitlab >/dev/null 2>&1; then
+    return 0
+  fi
+
+  local port occupied=0
+  for port in 8080 2222; do
+    if lsof -nP -iTCP:"${port}" -sTCP:LISTEN >/dev/null 2>&1; then
+      echo "[apply.sh] 錯誤：port ${port} 已被佔用，LoadBalancer 會拿不到位址。" >&2
+      occupied=1
+    fi
+  done
+
+  if [[ "${occupied}" -eq 1 ]]; then
+    local running
+    running="$(docker ps --filter 'name=^gitlab$' --filter 'status=running' --quiet 2>/dev/null || true)"
+    if [[ -n "${running}" ]]; then
+      echo "  佔用者是 Docker Compose 版的 GitLab，請先執行：../run.sh docker stop" >&2
+    else
+      echo "  請以下列指令找出佔用者後自行處理：" >&2
+      echo "    lsof -nP -iTCP:8080 -sTCP:LISTEN" >&2
+    fi
     return 1
   fi
   return 0
@@ -88,6 +110,19 @@ check_port_conflict() {
 #   清理與修正項目訊息
 #######################################
 clean_stale_state() {
+  # 與 Compose 版相同的一道 guard：服務運行中絕不能清 socket。
+  # find -type s 只看檔案型別，分不出活的與殘留的，而誤刪活 socket 的後果無法
+  # 自癒——listener 持有的是已開啟的 inode，刪掉路徑名既不會通知它、也不會讓它
+  # 重建，但連線方是以路徑名 connect；加上 kubectl apply 對設定未變的 Deployment
+  # 是 no-op（不會重建 pod），沒有任何人會把 socket 補回來。故偵測到運行中即跳過。
+  local running
+  running="$(kubectl -n "${NAMESPACE}" get pods -l app.kubernetes.io/name=gitlab \
+    --field-selector=status.phase=Running -o name 2>/dev/null || true)"
+  if [[ -n "${running}" ]]; then
+    echo "[apply.sh] GitLab pod 運行中，跳過 socket 清理（避免刪除使用中的 socket）。"
+    return 0
+  fi
+
   local data_dir="${DATA_DIR}/data"
   [[ -d "${data_dir}" ]] || return 0
 

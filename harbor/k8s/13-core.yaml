@@ -8,6 +8,7 @@
 #
 # Service 名必須是 core：nginx.conf 的 upstream 與各 service 的 env
 # （CORE_URL、TOKEN_SERVICE_URL）都寫 core:8080。
+---
 apiVersion: apps/v1
 kind: Deployment
 metadata:

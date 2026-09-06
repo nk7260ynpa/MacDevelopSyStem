@@ -6,9 +6,11 @@
 # 容器內不留回退點，故升級前務必先備份整個 data 目錄。
 # 另外 pg_upgrade 沿用舊叢集的索引檔，其排序來自升級前的 glibc collation，
 # 升級後應重建索引：
-#   kubectl -n devops exec deploy/postgresql -- reindexdb --all --username postgres
+#   kubectl -n devops exec deploy/postgresql -- \
+#     reindexdb --all --username postgres
 #
 # Service 名必須是 postgresql：core 的 env 內是 POSTGRESQL_HOST=postgresql。
+---
 apiVersion: apps/v1
 kind: Deployment
 metadata:

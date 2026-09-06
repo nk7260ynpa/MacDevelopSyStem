@@ -12,6 +12,7 @@
 # 單節點的 hostPath 實質上就是多讀多寫，宣告 RWX 才不會被 binder 擋下。
 #
 # reclaimPolicy: Retain —— 刪掉 PVC/PV 不會清掉 data 內的實際資料。
+---
 apiVersion: v1
 kind: PersistentVolume
 metadata:

@@ -9,6 +9,7 @@
 #
 # Service 名取 harbor（不是 proxy）：這是給人用的對外入口，內部沒有任何設定
 # 檔以 proxy 為名互連，取一個一眼看得懂的名字比較好。
+---
 apiVersion: apps/v1
 kind: Deployment
 metadata:

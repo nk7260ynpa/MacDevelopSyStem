@@ -4,6 +4,7 @@
 # 改為 goharbor/valkey-photon（v2.15.1 為最後一版 redis-photon）。官方樣板仍沿用
 # redis 作為 service 名與資料路徑（/var/lib/redis），此處比照辦理——各 service 的
 # 設定檔裡的連線位址是 redis:6379，Service 名必須完全對上才解析得到。
+---
 apiVersion: apps/v1
 kind: Deployment
 metadata:

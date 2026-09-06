@@ -16,6 +16,7 @@
 # 注意：hostPath 指向的是 macOS 的 virtiofs 掛載，不支援對 unix socket
 # unlink/chmod，也不保留 setgid。03-deployment.yaml 因此把所有 socket 移到
 # emptyDir，apply.sh 則在 macOS 端修正 repositories 的權限。詳見 README。
+---
 apiVersion: v1
 kind: PersistentVolume
 metadata:

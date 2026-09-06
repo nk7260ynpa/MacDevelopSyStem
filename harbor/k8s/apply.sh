@@ -51,27 +51,42 @@ check_hostpath_support() {
 }
 
 #######################################
-# 確認對外 port 未被 Docker Compose 版佔用。
+# 確認對外 port 未被其他程式佔用。
 #
 # K8s 的 Service 走 LoadBalancer 綁 localhost:8081，與 Compose 版相同。
-# Compose 版若還在跑，LoadBalancer 會因 port 被佔而永遠拿不到位址。
+# port 若已被佔，LoadBalancer 會靜默地停在 <pending> 永遠拿不到位址
+# ——沒有錯誤訊息，只是連不上，故在此先擋下來。
+#
+# 以實際佔埠情形判斷而非只看容器名，確認是 Compose 版佔的話另外給明確指令。
 # 注意 Compose 版 proxy 的 container_name 是 nginx，不是 proxy。
 # Globals:
-#   無
+#   NAMESPACE
 # Arguments:
 #   無
 # Outputs:
 #   偵測到衝突時輸出錯誤訊息並回傳 1
 #######################################
 check_port_conflict() {
+  # 自己已經部署過就跳過：重複執行 apply.sh 是冪等操作，此時 8081 本來就被
+  # 自己的 LoadBalancer 佔著，不該把它判成衝突。
+  if kubectl -n "${NAMESPACE}" get service harbor >/dev/null 2>&1; then
+    return 0
+  fi
+
+  if ! lsof -nP -iTCP:8081 -sTCP:LISTEN >/dev/null 2>&1; then
+    return 0
+  fi
+
+  echo "[apply.sh] 錯誤：port 8081 已被佔用，LoadBalancer 會拿不到位址。" >&2
   local running
   running="$(docker ps --filter 'name=^nginx$' --filter 'status=running' --quiet 2>/dev/null || true)"
   if [[ -n "${running}" ]]; then
-    echo "[apply.sh] 錯誤：Docker Compose 版的 Harbor 仍在運行，會搶走 8081。" >&2
-    echo "  請先執行：../run.sh docker stop" >&2
-    return 1
+    echo "  佔用者是 Docker Compose 版的 Harbor，請先執行：../run.sh docker stop" >&2
+  else
+    echo "  請以下列指令找出佔用者後自行處理：" >&2
+    echo "    lsof -nP -iTCP:8081 -sTCP:LISTEN" >&2
   fi
-  return 0
+  return 1
 }
 
 #######################################
@@ -114,12 +129,18 @@ if ! command -v kubectl >/dev/null 2>&1; then
   exit 1
 fi
 
-if [[ ! -d "${DATA_DIR}/config/core" ]]; then
-  echo "[apply.sh] 偵測不到 data/config，請先擇一執行：" >&2
-  echo "  ./migrate.sh   # 沿用 Docker Compose 版的既有資料" >&2
-  echo "  ./build.sh     # 全新建立（以 harbor.yml 產生設定）" >&2
-  exit 1
-fi
+# 檢查設定與金鑰是否齊備。金鑰特別重要：kubelet 對 hostPath 的 subPath 在來源
+# 不存在時會「建出一個目錄」，core 於是拿到目錄而非檔案，錯誤訊息完全對應不到
+# 真正的原因（rsync 中斷、只搬了一半）。在這裡擋下來省掉大量除錯時間。
+for required in config/core config/nginx config/registry \
+                secret/keys/secretkey secret/core/private_key.pem; do
+  if [[ ! -e "${DATA_DIR}/${required}" ]]; then
+    echo "[apply.sh] 偵測不到 data/${required}，設定或金鑰不完整。請先擇一執行：" >&2
+    echo "  ./migrate.sh   # 沿用 Docker Compose 版的既有資料" >&2
+    echo "  ./build.sh     # 全新建立（以 harbor.yml 產生設定）" >&2
+    exit 1
+  fi
+done
 
 echo "[apply.sh] 目前 kubectl context：$(kubectl config current-context)"
 check_hostpath_support

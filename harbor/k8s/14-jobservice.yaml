@@ -4,6 +4,7 @@
 # 與 FILE，FILE 那條會寫進 /var/log/jobs，UI 上「查看 job log」讀的就是它。
 #
 # Service 名必須是 jobservice：core 的 env 內是 JOBSERVICE_URL=http://jobservice:8080。
+---
 apiVersion: apps/v1
 kind: Deployment
 metadata:

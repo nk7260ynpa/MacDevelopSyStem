@@ -7,6 +7,7 @@
 #
 # 因為綁的是同一組 port，啟動前 Docker Compose 版必須已經停止，否則 port
 # 被佔用、LoadBalancer 會起不來。apply.sh 會先做這項檢查。
+---
 apiVersion: v1
 kind: Service
 metadata:
