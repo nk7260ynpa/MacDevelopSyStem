@@ -661,7 +661,10 @@ cd harbor
 > 佔用者是 Compose 版時另外提示對應的停止指令。
 >
 > 該檢查只看得到 **macOS 主機端**。Harbor 的 8081 另有一個綁定點在 VM 內
-> （proxy 的 `hostPort`），那一側被佔走時腳本會放行、proxy 靜默地卡在 `Pending`。
+> （proxy 的 `hostPort`），那一側被佔走時腳本一律放行，症狀則看佔用者是誰：
+> 若是另一個帶 `hostPort` 的 Pod，proxy 會停在 `Pending`（`kubectl describe pod`
+> 有 `FailedScheduling`）；若是 `--network host` 容器，proxy 照常 `Running`，
+> 但 8081 的流量走向不確定——後者才是真的靜默。
 
 ## 版本升級
 

@@ -68,8 +68,9 @@ spec:
             #   - host.docker.internal:8081 在 VM 內連得通，但它不是 loopback、
             #     不在 daemon 的 insecure registry 清單（127.0.0.0/8）內，會被
             #     強制走 HTTPS 而失敗。
-            # NodePort（127.0.0.1:31981）在 VM 內同樣可達且走 HTTP，但要改掉各
-            # repo 寫死的位址、還得先固定住 NodePort，成本明顯較高。維持 8081
+            # NodePort 在 VM 內同樣可達且走 HTTP（目前配置到 31981，但本檔沒有
+            # 指定 nodePort，Service 重建就會換號），要走這條得改掉各 repo 寫死
+            # 的位址、還得先把 NodePort 固定住，成本明顯較高。維持 8081
             # 則各 repo 的 Dockerfile FROM、CI 的 HARBOR_REGISTRY、runner 的
             # config.toml 一個字都不用改。
             #

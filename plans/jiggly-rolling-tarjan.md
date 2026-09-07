@@ -90,6 +90,9 @@ hostPort 的用途與為何不能改用 `host.docker.internal`。既有的 `stra
 且已在 `harbor` Service 存在時短路，加 hostPort 不影響它。本 repo 無 CLAUDE.md、
 無 Python 程式碼，故無測試需新增。
 
+> 執行後追記：`apply.sh` 的**邏輯**確實一字未動，但依 verify-agent 的建議另補了
+> 註解與失敗提示，說明這道檢查只涵蓋 macOS 主機端、看不到 VM 內的 hostPort 綁定。
+
 ## 部署
 
 ```bash

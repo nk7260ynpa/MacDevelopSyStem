@@ -58,9 +58,13 @@ check_hostpath_support() {
 # ——沒有錯誤訊息，只是連不上，故在此先擋下來。
 #
 # 注意這道檢查只涵蓋 macOS 主機端。8081 另有一個綁定點在 Docker Desktop VM 內
-# （16-proxy.yaml 的 hostPort），lsof 看不到那一側：VM 內的 8081 若被別的
-# --network host 容器或帶 hostPort 的 pod 佔走，這裡會放行，proxy 則靜默地卡在
-# Pending。收尾提示因此一併寫出這個可能性。
+# （16-proxy.yaml 的 hostPort），lsof 看不到那一側，佔用者是誰決定了症狀：
+#   - 另一個帶 hostPort: 8081 的 Pod：scheduler 會把該 node 濾掉，proxy 停在
+#     Pending，kubectl describe pod 看得到 FailedScheduling 事件。
+#   - --network host 容器或任何非 Pod 的行程：scheduler 看不到它，CNI portmap
+#     只下 iptables DNAT 規則、不做 socket bind，於是 proxy 照常 Running，
+#     8081 的流量走向卻不確定——這一種才是真的靜默，也最難查。
+# 兩種情形這裡都會放行，收尾提示因此一併寫出這個可能性。
 #
 # 以實際佔埠情形判斷而非只看容器名，確認是 Compose 版佔的話另外給明確指令。
 # 注意 Compose 版 proxy 的 container_name 是 nginx，不是 proxy。
