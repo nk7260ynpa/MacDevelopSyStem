@@ -7,6 +7,14 @@
 # 對外 8081 → 容器內 nginx 的 8080，與 Compose 的「8081:8080」完全一致；
 # harbor.yml 的 external_url 因此不需要更動（仍是 http://localhost:8081）。
 #
+# 對外入口有兩條路徑，兩者各綁一個網路命名空間，缺一不可：
+#   - Service（LoadBalancer）：macOS 主機 → Harbor。瀏覽器 UI、主機上的 curl。
+#   - 容器的 hostPort：Docker Desktop VM → Harbor。docker daemon 拉映像、
+#     以及所有 --network host 的容器。
+# Docker Desktop 對 LoadBalancer 的實作是在 macOS 主機開 listener，那個
+# listener 不在 VM 內，而 daemon 解析映像來源是在 VM 那一側，所以只有
+# LoadBalancer 時 daemon 會拿到 connection refused。詳見下方 ports 的註解。
+#
 # Service 名取 harbor（不是 proxy）：這是給人用的對外入口，內部沒有任何設定
 # 檔以 proxy 為名互連，取一個一眼看得懂的名字比較好。
 ---
@@ -51,8 +59,22 @@ spec:
               drop: ["ALL"]
               add: ["CHOWN", "SETGID", "SETUID", "NET_BIND_SERVICE"]
           ports:
+            # hostPort 讓 kubelet（CNI portmap）在 node（即 Docker Desktop VM）
+            # 綁 8081 轉進容器的 8080，VM 內的 127.0.0.1:8081 因此有監聽。
+            #
+            # 這是 docker daemon 拉 Harbor 映像的唯一可行路徑：
+            #   - LoadBalancer 綁在 macOS 主機端，VM 內連不到（connection refused）。
+            #   - host.docker.internal:8081 在 VM 內連得通，但它不是 loopback、
+            #     不在 daemon 的 insecure registry 清單（127.0.0.0/8）內，會被
+            #     強制走 HTTPS 而失敗。
+            # 補上之後，各 repo 寫死的 127.0.0.1:8081（Dockerfile 的 FROM、CI 的
+            # HARBOR_REGISTRY、runner 的 config.toml）一個字都不用改。
+            #
+            # Deployment 的 strategy 必須維持 Recreate：hostPort 由單一 pod 獨佔，
+            # 滾動更新時新舊 pod 並存會撞埠，新 pod 會卡在 Pending。
             - name: http
               containerPort: 8080
+              hostPort: 8081
           volumeMounts:
             - name: data
               mountPath: /etc/nginx
