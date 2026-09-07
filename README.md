@@ -67,7 +67,7 @@ MacDevelopSyStem/
     │   ├── 13-core.yaml
     │   ├── 14-jobservice.yaml
     │   ├── 15-portal.yaml
-    │   ├── 16-proxy.yaml        # LoadBalancer 8081
+    │   ├── 16-proxy.yaml        # 對外入口：LoadBalancer + hostPort 8081
     │   ├── apply.sh             # 套用資源 + 將 env 檔轉為 Secret
     │   ├── build.sh             # 全新建立時以 prepare 產生設定
     │   ├── delete.sh            # 移除資源（data 保留）
@@ -336,6 +336,46 @@ cd harbor
 > 因為 prepare 產生的設定裡寫的就是這些位址（`core:8080`、`redis:6379`）。
 > 改動 Service 名會讓整套設定失效。
 
+### 主機與 VM 是兩個不同的網路命名空間
+
+Harbor 的對外入口有**兩條路徑**，`16-proxy.yaml` 同時提供，缺一不可：
+
+- **macOS 主機 → Harbor**：由 Service（`type: LoadBalancer`）提供。
+  瀏覽器 UI 與主機上的 `curl` 走這條。
+- **Docker Desktop VM → Harbor**：由容器的 `hostPort: 8081` 提供。
+  docker daemon 拉映像、以及所有 `--network host` 的容器走這條。
+
+Docker Desktop 對 `type: LoadBalancer` 的實作是在 **macOS 主機**開 listener，
+那個 listener 不在 VM 內；而 docker daemon 解析映像來源是在 VM 那一側。Compose 版
+以 `-p 8081:8080` 發佈時 VM 內本來就有監聽，搬進 K8s 後就沒有了，於是只要 daemon
+碰到 Harbor 的映像就會失敗：
+
+```text
+dial tcp 127.0.0.1:8081: connect: connection refused
+```
+
+修法是在 proxy 容器補 `hostPort: 8081`，由 kubelet 在 node（即 VM）綁 8081 轉進
+容器的 8080。這樣各處寫死的 `127.0.0.1:8081` 一個字都不用改。
+
+> 不能改用 `host.docker.internal:8081`：它在 VM 內雖然連得通，但不是 loopback、
+> 不在 daemon 的 insecure registry 清單（`127.0.0.0/8`）內，會被強制走 HTTPS 而失敗。
+>
+> GitLab 沒有這個問題，因此 `gitlab/k8s/04-service.yaml` 只有 LoadBalancer：
+> CI 走 `http://host.docker.internal:8080` clone，HTTP 沒有 insecure-registry
+> 那層限制。
+
+驗證兩條路徑是否都通：
+
+```bash
+# VM 側（daemon 的網路命名空間）
+docker run --rm --network host busybox sh -c \
+  'wget -q -T3 -O /dev/null http://127.0.0.1:8081/api/v2.0/ping && echo OK'
+docker pull 127.0.0.1:8081/twstock/runner:helper-production
+
+# 主機側
+curl -s -o /dev/null -w 'HTTP %{http_code}\n' http://127.0.0.1:8081/api/v2.0/ping
+```
+
 ### Harbor：透過 Docker Compose（備用）
 
 首次啟動前必須先拉 image 並產生各 service 設定：
@@ -403,6 +443,10 @@ Harbor port 8081 已刻意錯開 GitLab 的 8080，兩者可同時運行（記�
 這種污染**不會有任何警告**，Docker Compose 版也完全不會出現，因此排查時很難
 往這個方向想。現有 8 份 manifest 都帶了這個欄位，照著抄就不會漏；服務名越通用
 （`core`、`registry`、`redis`），撞名的機會越高。
+
+**服務若需要被 docker daemon 或 `--network host` 的容器存取，只有 LoadBalancer
+不夠，要另外加 `hostPort`。** LoadBalancer 綁的是 macOS 主機端，VM 內連不到——
+見[主機與 VM 是兩個不同的網路命名空間](#主機與-vm-是兩個不同的網路命名空間)。
 
 ---
 
@@ -615,6 +659,12 @@ cd harbor
 > 兩套方案搶同一組 port（GitLab 8080／2222、Harbor 8081），**同一時間只能啟動其中一套**。
 > `k8s/apply.sh` 會在啟動前檢查這些 port 是否已被佔用，衝突時直接擋下；
 > 佔用者是 Compose 版時另外提示對應的停止指令。
+>
+> 該檢查只看得到 **macOS 主機端**。Harbor 的 8081 另有一個綁定點在 VM 內
+> （proxy 的 `hostPort`），那一側被佔走時腳本一律放行，症狀則看佔用者是誰：
+> 若是另一個帶 `hostPort` 的 Pod，proxy 會停在 `Pending`（`kubectl describe pod`
+> 有 `FailedScheduling`）；若是 `--network host` 容器，proxy 照常 `Running`，
+> 但 8081 的流量走向不確定——後者才是真的靜默。
 
 ## 版本升級
 

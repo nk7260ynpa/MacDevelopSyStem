@@ -57,6 +57,15 @@ check_hostpath_support() {
 # port 若已被佔，LoadBalancer 會靜默地停在 <pending> 永遠拿不到位址
 # ——沒有錯誤訊息，只是連不上，故在此先擋下來。
 #
+# 注意這道檢查只涵蓋 macOS 主機端。8081 另有一個綁定點在 Docker Desktop VM 內
+# （16-proxy.yaml 的 hostPort），lsof 看不到那一側，佔用者是誰決定了症狀：
+#   - 另一個帶 hostPort: 8081 的 Pod：scheduler 會把該 node 濾掉，proxy 停在
+#     Pending，kubectl describe pod 看得到 FailedScheduling 事件。
+#   - --network host 容器或任何非 Pod 的行程：scheduler 看不到它，CNI portmap
+#     只下 iptables DNAT 規則、不做 socket bind，於是 proxy 照常 Running，
+#     8081 的流量走向卻不確定——這一種才是真的靜默，也最難查。
+# 兩種情形這裡都會放行，收尾提示因此一併寫出這個可能性。
+#
 # 以實際佔埠情形判斷而非只看容器名，確認是 Compose 版佔的話另外給明確指令。
 # 注意 Compose 版 proxy 的 container_name 是 nginx，不是 proxy。
 # Globals:
@@ -77,7 +86,7 @@ check_port_conflict() {
     return 0
   fi
 
-  echo "[apply.sh] 錯誤：port 8081 已被佔用，LoadBalancer 會拿不到位址。" >&2
+  echo "[apply.sh] 錯誤：主機端的 port 8081 已被佔用，LoadBalancer 會拿不到位址。" >&2
   local running
   running="$(docker ps --filter 'name=^nginx$' --filter 'status=running' --quiet 2>/dev/null || true)"
   if [[ -n "${running}" ]]; then
@@ -182,5 +191,6 @@ done
 echo ""
 echo "[apply.sh] 已套用全部資源（首次啟動需 1-2 分鐘完成初始化）。"
 echo "  觀察 pod：kubectl -n ${NAMESPACE} get pods -l app.kubernetes.io/name=harbor -w"
+echo "  proxy 若卡在 Pending，多半是 VM 內的 8081 被別的 hostPort 佔走（本腳本查不到）"
 echo "  存取 URL：http://localhost:8081"
 echo "  預設帳號：admin / Harbor12345（沿用既有資料時為你原本設定的密碼）"
