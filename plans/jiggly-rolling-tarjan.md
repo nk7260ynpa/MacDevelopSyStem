@@ -6,7 +6,7 @@ Harbor 從 Docker Compose 搬到 k8s（`devops` namespace、`type: LoadBalancer`
 **docker daemon 拉不到 Harbor 的映像**，所有帶 `tags: [twstock]` 的 CI 部署 job 與
 本機 `docker build` 都會失敗：
 
-```
+```text
 dial tcp 127.0.0.1:8081: connect: connection refused
 ```
 
@@ -20,7 +20,7 @@ dial tcp 127.0.0.1:8081: connect: connection refused
 
 根因：Docker Desktop 對 `type: LoadBalancer` 的實作是在 **macOS 主機**開 listener
 （`lsof` 顯示佔用者為 `com.docker`），那個 listener 不在 VM 內。Compose 版以
-`-p 8081:8081` 發佈時 VM 內是有監聽的，搬進 k8s 後就沒有了。而 daemon 拉映像的
+`-p 8081:8080` 發佈時 VM 內是有監聽的，搬進 k8s 後就沒有了。而 daemon 拉映像的
 來源解析發生在 VM 那一側，所以連不到。
 
 `host.docker.internal:8081` 在 VM 內連得通，但它不是 loopback、不在 daemon 的

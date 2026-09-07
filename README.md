@@ -347,7 +347,7 @@ Harbor 的對外入口有**兩條路徑**，`16-proxy.yaml` 同時提供，缺�
 
 Docker Desktop 對 `type: LoadBalancer` 的實作是在 **macOS 主機**開 listener，
 那個 listener 不在 VM 內；而 docker daemon 解析映像來源是在 VM 那一側。Compose 版
-以 `-p 8081:8081` 發佈時 VM 內本來就有監聽，搬進 K8s 後就沒有了，於是只要 daemon
+以 `-p 8081:8080` 發佈時 VM 內本來就有監聽，搬進 K8s 後就沒有了，於是只要 daemon
 碰到 Harbor 的映像就會失敗：
 
 ```text
@@ -659,6 +659,9 @@ cd harbor
 > 兩套方案搶同一組 port（GitLab 8080／2222、Harbor 8081），**同一時間只能啟動其中一套**。
 > `k8s/apply.sh` 會在啟動前檢查這些 port 是否已被佔用，衝突時直接擋下；
 > 佔用者是 Compose 版時另外提示對應的停止指令。
+>
+> 該檢查只看得到 **macOS 主機端**。Harbor 的 8081 另有一個綁定點在 VM 內
+> （proxy 的 `hostPort`），那一側被佔走時腳本會放行、proxy 靜默地卡在 `Pending`。
 
 ## 版本升級
 

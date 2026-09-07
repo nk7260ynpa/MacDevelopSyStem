@@ -62,16 +62,24 @@ spec:
             # hostPort 讓 kubelet（CNI portmap）在 node（即 Docker Desktop VM）
             # 綁 8081 轉進容器的 8080，VM 內的 127.0.0.1:8081 因此有監聽。
             #
-            # 這是 docker daemon 拉 Harbor 映像的唯一可行路徑：
+            # 在「位址維持 127.0.0.1:8081 不變」的前提下，這是 docker daemon
+            # 拉 Harbor 映像的唯一可行路徑：
             #   - LoadBalancer 綁在 macOS 主機端，VM 內連不到（connection refused）。
             #   - host.docker.internal:8081 在 VM 內連得通，但它不是 loopback、
             #     不在 daemon 的 insecure registry 清單（127.0.0.0/8）內，會被
             #     強制走 HTTPS 而失敗。
-            # 補上之後，各 repo 寫死的 127.0.0.1:8081（Dockerfile 的 FROM、CI 的
-            # HARBOR_REGISTRY、runner 的 config.toml）一個字都不用改。
+            # NodePort（127.0.0.1:31981）在 VM 內同樣可達且走 HTTP，但要改掉各
+            # repo 寫死的位址、還得先固定住 NodePort，成本明顯較高。維持 8081
+            # 則各 repo 的 Dockerfile FROM、CI 的 HARBOR_REGISTRY、runner 的
+            # config.toml 一個字都不用改。
             #
-            # Deployment 的 strategy 必須維持 Recreate：hostPort 由單一 pod 獨佔，
+            # Deployment 的 strategy 需維持 Recreate：hostPort 由單一 pod 獨佔，
             # 滾動更新時新舊 pod 並存會撞埠，新 pod 會卡在 Pending。
+            # （RollingUpdate 搭 maxSurge: 0 也能避開，但既有設定本就是 Recreate，
+            # 沒有理由改。）
+            #
+            # 未指定 hostIP，故綁 VM 內的 0.0.0.0——與 Compose 版的「8081:8080」
+            # 行為一致，不是本次的退步。
             - name: http
               containerPort: 8080
               hostPort: 8081
