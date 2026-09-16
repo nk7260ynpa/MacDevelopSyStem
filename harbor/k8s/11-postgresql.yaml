@@ -1,6 +1,6 @@
 # 內建 PostgreSQL。
 #
-# v2.15.2 映像的 entrypoint 為 ["/docker-entrypoint.sh", "15", "18"]，兩個參數即
+# 目前釘選之 dev 映像的 entrypoint 為 ["/docker-entrypoint.sh", "15", "18"]，兩個參數即
 # 舊／新的 PG 大版本；首次以本版啟動時若偵測到既有的 pg15 資料目錄，會自動跑
 # pg_upgrade 升到 pg18。升級成功後 entrypoint 會「直接刪除」舊的 database/pg15，
 # 容器內不留回退點，故升級前務必先備份整個 data 目錄。
@@ -45,7 +45,7 @@ spec:
       enableServiceLinks: false
       containers:
         - name: postgresql
-          image: goharbor/harbor-db:v2.15.2
+          image: goharbor/harbor-db:dev@sha256:caf122ae29d195e66f5f36ca2e6ca2629d897540000b0324a6bebcc3158afc7e
           imagePullPolicy: IfNotPresent
           securityContext:
             capabilities:

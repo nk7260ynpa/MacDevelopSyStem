@@ -39,7 +39,7 @@ spec:
       enableServiceLinks: false
       containers:
         - name: jobservice
-          image: goharbor/harbor-jobservice:v2.15.2
+          image: goharbor/harbor-jobservice:dev@sha256:efde3d5cf76ae551954ae312e940e56ff552fccf8ad06bd215280bc1da4d473f
           imagePullPolicy: IfNotPresent
           securityContext:
             capabilities:

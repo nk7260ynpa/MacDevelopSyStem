@@ -44,7 +44,7 @@ spec:
       enableServiceLinks: false
       containers:
         - name: registry
-          image: goharbor/registry-photon:v2.15.2
+          image: goharbor/registry-photon:dev@sha256:d61f728a88f94f7aa273bc28115030bac17619f452bfe3da66bb48c7e291e827
           imagePullPolicy: IfNotPresent
           securityContext:
             capabilities:
@@ -80,7 +80,7 @@ spec:
             limits:
               memory: "512Mi"
         - name: registryctl
-          image: goharbor/harbor-registryctl:v2.15.2
+          image: goharbor/harbor-registryctl:dev@sha256:bc1c0cd1b4805ed8283ceb3d61345c23c7313d235fa87feef882cfde4e8ba0a7
           imagePullPolicy: IfNotPresent
           securityContext:
             capabilities:
