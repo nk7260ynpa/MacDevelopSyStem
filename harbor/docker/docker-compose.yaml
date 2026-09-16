@@ -6,7 +6,12 @@
 # 對外 port：8081 -> proxy:8080（HTTP）
 # 各 service 的設定檔由 ./build.sh 透過 goharbor/prepare image 從
 # harbor.yml 產生至 ./data/config/<service>/，請務必先執行 ./build.sh
-# 再以 ../run.sh docker 或 docker compose up -d 啟動。
+# 再以 ../run.sh docker 啟動。
+#
+# 映像版本不寫在本檔，由 ../versions.env 決定（與 K8s 方案共用同一份）：以下
+# image 皆寫成 ${HARBOR_IMAGE_XXX:?…}，沒載入那個檔時 docker compose 會直接
+# 報錯，不會靜默起成空映像名。載入的動作已寫在 ../run.sh docker 與 ./build.sh
+# 內，請一律經這兩者操作，不要直接 docker compose up。
 #
 # 重要設計：
 #   - 以 name: harbor 固定 compose 專案名，避免與其他同樣放在 docker/ 目錄、
@@ -22,7 +27,7 @@ name: harbor
 
 services:
   registry:
-    image: goharbor/registry-photon:dev@sha256:d61f728a88f94f7aa273bc28115030bac17619f452bfe3da66bb48c7e291e827
+    image: ${HARBOR_IMAGE_REGISTRY:?請先載入 harbor/versions.env}
     container_name: registry
     restart: always
     cap_drop:
@@ -49,7 +54,7 @@ services:
         max-file: "3"
 
   registryctl:
-    image: goharbor/harbor-registryctl:dev@sha256:bc1c0cd1b4805ed8283ceb3d61345c23c7313d235fa87feef882cfde4e8ba0a7
+    image: ${HARBOR_IMAGE_REGISTRYCTL:?請先載入 harbor/versions.env}
     container_name: registryctl
     env_file:
       - ./data/config/registryctl/env
@@ -89,7 +94,7 @@ services:
   # 可能造成列表載入不完、robot 帳號權限異常等症狀，升級後應重建索引：
   #   docker exec harbor-db reindexdb --all --username postgres
   postgresql:
-    image: goharbor/harbor-db:dev@sha256:caf122ae29d195e66f5f36ca2e6ca2629d897540000b0324a6bebcc3158afc7e
+    image: ${HARBOR_IMAGE_DB:?請先載入 harbor/versions.env}
     container_name: harbor-db
     restart: always
     cap_drop:
@@ -117,7 +122,7 @@ services:
   # service 名、container_name 與資料路徑（/var/lib/redis），此處比照辦理，
   # 各 service 設定中的連線位址（redis:6379）因而不需更動。
   redis:
-    image: goharbor/valkey-photon:dev@sha256:c615eac36282e6005b4b829dfac964f3fa957f49011e0db6d15accbe5b3755bc
+    image: ${HARBOR_IMAGE_REDIS:?請先載入 harbor/versions.env}
     container_name: redis
     restart: always
     cap_drop:
@@ -137,7 +142,7 @@ services:
         max-file: "3"
 
   core:
-    image: goharbor/harbor-core:dev@sha256:fef1f0825017f6fec9c9420dc0766ed3b7a201843f20e1967be28ca99fdb70a3
+    image: ${HARBOR_IMAGE_CORE:?請先載入 harbor/versions.env}
     container_name: harbor-core
     env_file:
       - ./data/config/core/env
@@ -182,7 +187,7 @@ services:
         max-file: "3"
 
   portal:
-    image: goharbor/harbor-portal:dev@sha256:b0747b89ca2c392dc443d0bb4f95a7e94ce4cb5066003fe559ed0becfb596804
+    image: ${HARBOR_IMAGE_PORTAL:?請先載入 harbor/versions.env}
     container_name: harbor-portal
     restart: always
     cap_drop:
@@ -205,7 +210,7 @@ services:
         max-file: "3"
 
   jobservice:
-    image: goharbor/harbor-jobservice:dev@sha256:efde3d5cf76ae551954ae312e940e56ff552fccf8ad06bd215280bc1da4d473f
+    image: ${HARBOR_IMAGE_JOBSERVICE:?請先載入 harbor/versions.env}
     container_name: harbor-jobservice
     env_file:
       - ./data/config/jobservice/env
@@ -236,7 +241,7 @@ services:
         max-file: "3"
 
   proxy:
-    image: goharbor/nginx-photon:dev@sha256:8468bf54523cd6189c2b87c5650105b443e098474c0fb76f4abbcfb4ad395825
+    image: ${HARBOR_IMAGE_PROXY:?請先載入 harbor/versions.env}
     container_name: nginx
     restart: always
     cap_drop:

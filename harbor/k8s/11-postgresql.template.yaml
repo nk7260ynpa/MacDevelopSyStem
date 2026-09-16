@@ -45,7 +45,7 @@ spec:
       enableServiceLinks: false
       containers:
         - name: postgresql
-          image: goharbor/harbor-db:dev@sha256:caf122ae29d195e66f5f36ca2e6ca2629d897540000b0324a6bebcc3158afc7e
+          image: __HARBOR_IMAGE_DB__
           imagePullPolicy: IfNotPresent
           securityContext:
             capabilities:

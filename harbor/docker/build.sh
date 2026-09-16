@@ -17,15 +17,22 @@
 set -euo pipefail
 
 readonly SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-# prepare 映像釘選：正式版至 v2.15.3-rc1 仍只提供 amd64，本機為 arm64，故改用
-# 唯一含 arm64 原生映像的 dev 標籤（v2.16.0 開發版），並以 index digest 鎖定
-# 同一批（2026-09-16）建置。其餘 service 的映像由 docker compose pull 依
-# docker-compose.yaml 內的 digest 決定，兩處換版時須一起更新。
-readonly PREPARE_IMAGE="goharbor/prepare:dev@sha256:453da3cb34e155d58426f7ce508abd78e5fb574b60885c848a6a403c9bb65e3d"
 # 持久化資料夾，以 bind mount 掛入各 service。
 readonly DATA_DIR="${SCRIPT_DIR}/data"
+readonly VERSIONS_ENV="${SCRIPT_DIR}/../versions.env"
 
 cd "${SCRIPT_DIR}"
+
+# 映像版本（含 prepare 共 9 個）集中在 ../versions.env，K8s 方案共用同一份。
+# 以 set -a 匯出，docker-compose.yaml 的 ${HARBOR_IMAGE_XXX} 才取得到。
+if [[ ! -f "${VERSIONS_ENV}" ]]; then
+  echo "[build.sh] 錯誤：找不到 ${VERSIONS_ENV}，取不到映像版本。" >&2
+  exit 1
+fi
+set -a
+# shellcheck source=../versions.env disable=SC1091
+source "${VERSIONS_ENV}"
+set +a
 
 echo "[build.sh] 建立持久化目錄..."
 mkdir -p "${DATA_DIR}/config"
@@ -34,10 +41,10 @@ mkdir -p "${DATA_DIR}/config"
 mkdir -p "${DATA_DIR}/database" "${DATA_DIR}/registry" "${DATA_DIR}/redis" "${DATA_DIR}/job_logs"
 mkdir -p "${DATA_DIR}/ca_download" "${DATA_DIR}/psc" "${DATA_DIR}/secret"
 
-echo "[build.sh] 拉取 Harbor 各 service image（版本見 docker-compose.yaml）..."
+echo "[build.sh] 拉取 Harbor 各 service image（版本見 ../versions.env）..."
 docker compose pull
 
-echo "[build.sh] 使用 ${PREPARE_IMAGE} 從 harbor.yml 產生設定..."
+echo "[build.sh] 使用 ${HARBOR_IMAGE_PREPARE} 從 harbor.yml 產生設定..."
 # prepare 最後會額外產生它自己版本的 docker-compose.yml 至 /compose_location；
 # 本專案改用手寫的 docker-compose.yaml，故掛一個拋棄式目錄承接該檔並忽略，
 # 否則 prepare 會因找不到 /compose_location 而以例外中止（即使所需設定皆已產生）。
@@ -49,7 +56,7 @@ docker run --rm \
   -v "${DATA_DIR}:/data" \
   -v "${DATA_DIR}/secret:/secret" \
   -v "${COMPOSE_GEN_DIR}:/compose_location" \
-  "${PREPARE_IMAGE}" \
+  "${HARBOR_IMAGE_PREPARE}" \
   prepare --conf /input/harbor.yml
 # 拋棄 prepare 產生的 compose 檔，避免與手寫 docker-compose.yaml 混淆。
 rm -rf "${COMPOSE_GEN_DIR}"

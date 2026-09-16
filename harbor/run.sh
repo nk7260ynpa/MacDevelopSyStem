@@ -39,6 +39,17 @@ run_docker() {
 
   cd "${DOCKER_DIR}"
 
+  # docker-compose.yaml 的 image 取自 ../versions.env 且帶 :? 檢查，沒載入的話
+  # 連解析檔案都會失敗——logs／stop／status 一樣要解析，故在 case 之前就載入。
+  if [[ ! -f ../versions.env ]]; then
+    echo "[run.sh] 錯誤：找不到 $(cd .. && pwd)/versions.env，取不到映像版本。" >&2
+    return 1
+  fi
+  set -a
+  # shellcheck source=versions.env disable=SC1091
+  source ../versions.env
+  set +a
+
   case "${action}" in
     up|"")
       if [[ ! -d data/config/core ]]; then

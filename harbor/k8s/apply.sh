@@ -10,11 +10,12 @@
 #   - Docker Desktop 的 Kubernetes 需為 Kubeadm 佈建方式（見 check_hostpath_support）
 #   - Docker Compose 版的 Harbor 已停止（兩者搶同一個 port）
 #   - ./data/config 已就緒——沿用既有資料請先 ./migrate.sh，全新建立請先 ./build.sh
+#   - ../versions.env 存在（8 個 service 的映像版本由該檔代入）
 #
 # 流程：
 #   1. namespace / PV / PVC
 #   2. 把 prepare 產生的 env 檔轉成 Secret（Deployment 以 envFrom 取用）
-#   3. 依相依順序套用 8 個 service
+#   3. 依相依順序套用 8 個 service（manifests 為樣板，image 由 ../versions.env 代入）
 
 set -euo pipefail
 
@@ -23,6 +24,7 @@ cd "${SCRIPT_DIR}"
 
 readonly DATA_DIR="${SCRIPT_DIR}/data"
 readonly NAMESPACE="devops"
+readonly VERSIONS_ENV="${SCRIPT_DIR}/../versions.env"
 
 #######################################
 # 確認叢集節點看得到 macOS 的目錄。
@@ -58,7 +60,7 @@ check_hostpath_support() {
 # ——沒有錯誤訊息，只是連不上，故在此先擋下來。
 #
 # 注意這道檢查只涵蓋 macOS 主機端。8081 另有一個綁定點在 Docker Desktop VM 內
-# （16-proxy.yaml 的 hostPort），lsof 看不到那一側，佔用者是誰決定了症狀：
+# （16-proxy.template.yaml 的 hostPort），lsof 看不到那一側，佔用者是誰決定了症狀：
 #   - 另一個帶 hostPort: 8081 的 Pod：scheduler 會把該 node 濾掉，proxy 停在
 #     Pending，kubectl describe pod 看得到 FailedScheduling 事件。
 #   - --network host 容器或任何非 Pod 的行程：scheduler 看不到它，CNI portmap
@@ -133,6 +135,70 @@ create_env_secrets() {
   done
 }
 
+#######################################
+# 載入映像版本設定（../versions.env）。
+#
+# 該檔是 9 個映像 digest 的唯一來源，K8s 與 Compose 兩套方案共用。階段 3 的
+# manifests 全是樣板，缺了它就什麼都渲染不出來，故在動任何 kubectl 前先擋下。
+# Globals:
+#   VERSIONS_ENV
+# Arguments:
+#   無
+# Outputs:
+#   檔案不存在時輸出錯誤訊息並回傳 1
+#######################################
+load_versions() {
+  if [[ ! -f "${VERSIONS_ENV}" ]]; then
+    echo "[apply.sh] 錯誤：找不到 ${VERSIONS_ENV}，取不到映像版本。" >&2
+    return 1
+  fi
+  # shellcheck source=../versions.env disable=SC1091
+  source "${VERSIONS_ENV}"
+}
+
+#######################################
+# 以 versions.env 的映像版本渲染 manifest 樣板。
+#
+# 沿用 01-pv.template.yaml 的「佔位符 + sed」手法：把 __HARBOR_IMAGE_XXX__ 換成
+# versions.env 內同名變數的值。sed 分隔符用 |，映像字串本身含有 / : @。
+# 渲染後若仍留有 __HARBOR_IMAGE_ 開頭的字串，代表 manifest 用了 versions.env
+# 沒有定義的變數；這種情形 kubectl 會直接拿佔位符當映像名去拉，錯誤訊息完全
+# 對應不到真正的原因，故在此擋下。
+# Globals:
+#   VERSIONS_ENV
+# Arguments:
+#   樣板檔路徑
+# Outputs:
+#   渲染後的 manifest 至 stdout；有未替換的佔位符時輸出錯誤訊息並回傳 1
+#######################################
+render_manifest() {
+  local template="$1"
+  local key value rendered
+  # bash 3.2 沒有關聯陣列，改以一般陣列逐條累積 sed 的 -e 參數。
+  local sed_args=()
+
+  while IFS='=' read -r key value; do
+    # 只取 KEY=VALUE，跳過空行與 # 註解。
+    if [[ -z "${key}" || "${key}" == \#* ]]; then
+      continue
+    fi
+    sed_args+=(-e "s|__${key}__|${value}|g")
+  done < "${VERSIONS_ENV}"
+
+  if [[ "${#sed_args[@]}" -eq 0 ]]; then
+    echo "[apply.sh] 錯誤：${VERSIONS_ENV} 沒有任何 KEY=VALUE。" >&2
+    return 1
+  fi
+
+  rendered="$(sed "${sed_args[@]}" "${template}")"
+  if grep -q '__HARBOR_IMAGE_' <<<"${rendered}"; then
+    echo "[apply.sh] 錯誤：${template} 含 ${VERSIONS_ENV} 未定義的佔位符：" >&2
+    grep -o '__HARBOR_IMAGE_[A-Z_]*__' <<<"${rendered}" | sort -u >&2
+    return 1
+  fi
+  printf '%s\n' "${rendered}"
+}
+
 if ! command -v kubectl >/dev/null 2>&1; then
   echo "[apply.sh] 錯誤：找不到 kubectl，請先安裝。" >&2
   exit 1
@@ -159,6 +225,9 @@ for required in config/core config/nginx config/registry \
   fi
 done
 
+# 映像版本集中在 ../versions.env，階段 3 的樣板全靠它渲染，先確認取得到。
+load_versions
+
 echo "[apply.sh] 目前 kubectl context：$(kubectl config current-context)"
 check_hostpath_support
 check_port_conflict
@@ -179,13 +248,13 @@ create_env_secrets
 # K8s 本身沒有 depends_on，這個順序只是縮短彼此等待的時間——各 service 的探針
 # 會處理實際的就緒判定，順序錯了也只是多幾輪重試而已。
 echo "[apply.sh] 階段 3：依序部署 8 個 service..."
-for manifest in 10-redis.yaml 11-postgresql.yaml \
-                12-registry.yaml \
-                13-core.yaml \
-                14-jobservice.yaml 15-portal.yaml \
-                16-proxy.yaml; do
+for manifest in 10-redis.template.yaml 11-postgresql.template.yaml \
+                12-registry.template.yaml \
+                13-core.template.yaml \
+                14-jobservice.template.yaml 15-portal.template.yaml \
+                16-proxy.template.yaml; do
   echo "  ${manifest}"
-  kubectl apply -f "${manifest}"
+  render_manifest "${manifest}" | kubectl apply -f -
 done
 
 echo ""

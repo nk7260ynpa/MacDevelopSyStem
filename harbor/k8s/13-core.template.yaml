@@ -43,7 +43,7 @@ spec:
       enableServiceLinks: false
       containers:
         - name: core
-          image: goharbor/harbor-core:dev@sha256:fef1f0825017f6fec9c9420dc0766ed3b7a201843f20e1967be28ca99fdb70a3
+          image: __HARBOR_IMAGE_CORE__
           imagePullPolicy: IfNotPresent
           securityContext:
             capabilities:

@@ -52,7 +52,7 @@ spec:
       enableServiceLinks: false
       containers:
         - name: proxy
-          image: goharbor/nginx-photon:dev@sha256:8468bf54523cd6189c2b87c5650105b443e098474c0fb76f4abbcfb4ad395825
+          image: __HARBOR_IMAGE_PROXY__
           imagePullPolicy: IfNotPresent
           securityContext:
             capabilities:

@@ -57,17 +57,18 @@ MacDevelopSyStem/
 │       └── data/          # 持久化資料（僅 .keep 納入版控）
 └── harbor/                # Harbor 部署設定
     ├── run.sh             # 啟動入口（預設 K8s；up/logs/stop/status）
+    ├── versions.env       # 9 個映像版本的唯一來源（兩套方案共用）
     ├── k8s/               # Kubernetes 方案（預設）
     │   ├── 00-namespace.yaml    # devops namespace（與 GitLab 共用）
     │   ├── 01-pv.template.yaml  # hostPath PV，路徑由 apply.sh 代入
     │   ├── 02-pvc.yaml          # 單一 PVC，各 service 以 subPath 取用
-    │   ├── 10-redis.yaml        # 10~16 為 8 個 service 的 Deployment 與 Service
-    │   ├── 11-postgresql.yaml
-    │   ├── 12-registry.yaml     # registry 與 registryctl 同一 Pod
-    │   ├── 13-core.yaml
-    │   ├── 14-jobservice.yaml
-    │   ├── 15-portal.yaml
-    │   ├── 16-proxy.yaml        # 對外入口：LoadBalancer + hostPort 8081
+    │   ├── 10-redis.template.yaml       # 10~16 為 8 個 service 的 Deployment 與
+    │   ├── 11-postgresql.template.yaml  # Service，image 由 apply.sh 代入
+    │   ├── 12-registry.template.yaml    # registry 與 registryctl 同一 Pod
+    │   ├── 13-core.template.yaml
+    │   ├── 14-jobservice.template.yaml
+    │   ├── 15-portal.template.yaml
+    │   ├── 16-proxy.template.yaml       # 對外入口：LoadBalancer + hostPort 8081
     │   ├── apply.sh             # 套用資源 + 將 env 檔轉為 Secret
     │   ├── build.sh             # 首次建立或升級映像時以 prepare 產生設定
     │   ├── delete.sh            # 移除資源（data 保留）
@@ -301,8 +302,9 @@ docker exec gitlab sh -c 'mount | grep -E "/run/(gitlab-workhorse|gitaly)"'
 
 Harbor 為私有 Container Registry，包含 8 個 service（registry / registryctl /
 postgresql / redis / core / portal / jobservice / proxy），版本釘在 `dev` 標籤
-2026-09-16 那批建置（arm64 原生，原因見「[版本升級 › Harbor](#harbor)」），
-對外使用 8081 一個 port。**預設以 Kubernetes 部署**，Docker Compose 方案保留為備用。
+2026-09-16 那批建置（釘在 `harbor/versions.env`，改用 `dev` 的原因見
+「[版本升級 › Harbor](#harbor)」），對外使用 8081 一個 port。
+**預設以 Kubernetes 部署**，Docker Compose 方案保留為備用。
 
 ### Harbor：透過 Kubernetes（預設）
 
@@ -341,7 +343,7 @@ cd harbor
 
 ### 主機與 VM 是兩個不同的網路命名空間
 
-Harbor 的對外入口有**兩條路徑**，`16-proxy.yaml` 同時提供，缺一不可：
+Harbor 的對外入口有**兩條路徑**，`16-proxy.template.yaml` 同時提供，缺一不可：
 
 - **macOS 主機 → Harbor**：由 Service（`type: LoadBalancer`）提供。
   瀏覽器 UI 與主機上的 `curl` 走這條。
@@ -671,14 +673,14 @@ cd harbor
 
 ## 版本升級
 
-映像版本在兩套方案中各有釘選位置，升級時**必須同時改**，否則兩邊會跑在不同版本上：
+映像版本的釘選位置如下。GitLab 兩套方案各釘各的，升級時**必須同時改**，否則兩邊會
+跑在不同版本上；Harbor 只有 `versions.env` 一處，兩套方案共用。
 
 | 服務 | 方案 | 釘選位置 |
 | --- | --- | --- |
 | GitLab | K8s | `k8s/03-deployment.yaml` 的**兩處** `image`（initContainer 與主容器） |
 | GitLab | Compose | `docker/Dockerfile` 的 `FROM` |
-| Harbor | K8s | `k8s/1*.yaml` 的 8 個 `image` digest、`k8s/build.sh` 的 `HARBOR_IMAGE_DIGESTS` 與 `PREPARE_IMAGE` |
-| Harbor | Compose | `docker/docker-compose.yaml` 的 8 個 `image` digest、`docker/build.sh` 的 `PREPARE_IMAGE`、`docker/Dockerfile` 的 `FROM` |
+| Harbor | 兩套共用 | `harbor/versions.env` 的 9 行（8 個 service 加 `prepare`） |
 
 升級流程：K8s 走「改檔 → `./run.sh stop` → `./run.sh`」；Docker Compose 走
 「改檔 → `./docker/build.sh` → `./run.sh docker`」。無論走哪一套，升級前都要把對應的
@@ -741,8 +743,11 @@ arm64，8 個 service 一直靠 Rosetta 模擬執行。arm64 支援已於 2026-0
 `goharbor/<image>:dev@sha256:<index digest>`，把 8 個 service 加 `prepare` 共 9 個
 映像釘死在同一批建置（目前是 2026-09-16）。
 
-換版時到 Docker Hub 取同一天的 9 個 index digest，上表列的位置一次換齊，再走一般
-升級流程。沿用既有 `data/` 時 `build.sh` 可以直接重跑：`prepare` 偵測到
+換版時到 Docker Hub 取同一天的 9 個 index digest，只改 `harbor/versions.env` 的 9 行，
+再 `./run.sh stop && ./run.sh`（Compose 方案為 `./docker/build.sh` → `./run.sh docker`），
+其餘檔案都從那裡取值，不必再逐處同步。K8s 的 `1[0-6]-*.template.yaml` 是樣板，
+`image` 寫成 `__HARBOR_IMAGE_XXX__` 佔位符，`kubectl apply -f` 單檔會失敗，
+一律走 `apply.sh` 渲染。沿用既有 `data/` 時 `build.sh` 可以直接重跑：`prepare` 偵測到
 `data/secret/` 已有金鑰會原樣保留，只重生 `data/config/`，既有帳號與資料因而跟著
 帶到新版本（前面「兩者不可混用」說的是首次從 Compose 資料改建 K8s 方案的情境）。
 本次換版沒有 PostgreSQL 大版本變動（`dev` 的 harbor-db 仍是 PG 18），不會觸發
