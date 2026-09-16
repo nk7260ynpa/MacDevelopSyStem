@@ -39,7 +39,7 @@ spec:
       enableServiceLinks: false
       containers:
         - name: redis
-          image: goharbor/valkey-photon:v2.15.2
+          image: goharbor/valkey-photon:dev@sha256:c615eac36282e6005b4b829dfac964f3fa957f49011e0db6d15accbe5b3755bc
           imagePullPolicy: IfNotPresent
           securityContext:
             capabilities:

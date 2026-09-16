@@ -38,7 +38,7 @@ spec:
       enableServiceLinks: false
       containers:
         - name: portal
-          image: goharbor/harbor-portal:v2.15.2
+          image: goharbor/harbor-portal:dev@sha256:b0747b89ca2c392dc443d0bb4f95a7e94ce4cb5066003fe559ed0becfb596804
           imagePullPolicy: IfNotPresent
           securityContext:
             capabilities:
