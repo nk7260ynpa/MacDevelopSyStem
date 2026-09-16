@@ -16,7 +16,7 @@
 | 工具 | 用途 | 版本 | 狀態 |
 | --- | --- | --- | --- |
 | GitLab | 自架 Git 程式碼托管與 CI/CD | `19.2.4-ce.0` | 已支援 |
-| Harbor | 私有 Container Registry | `v2.15.2` | 已支援 |
+| Harbor | 私有 Container Registry | `dev`（v2.16.0 開發版，arm64 原生） | 已支援 |
 | （後續擴充） | 視需求新增，例如 Jenkins、Nexus、MinIO 等 | — | — |
 
 兩個工具皆預設以 **Kubernetes** 部署（`k8s/`），Docker Compose 方案（`docker/`）
@@ -300,7 +300,8 @@ docker exec gitlab sh -c 'mount | grep -E "/run/(gitlab-workhorse|gitaly)"'
 ## Harbor 部署
 
 Harbor 為私有 Container Registry，包含 8 個 service（registry / registryctl /
-postgresql / redis / core / portal / jobservice / proxy），版本固定 `v2.15.2`，
+postgresql / redis / core / portal / jobservice / proxy），版本釘在 `dev` 標籤
+2026-09-16 那批建置（arm64 原生，原因見「[版本升級 › Harbor](#harbor)」），
 對外使用 8081 一個 port。**預設以 Kubernetes 部署**，Docker Compose 方案保留為備用。
 
 ### Harbor：透過 Kubernetes（預設）
@@ -382,7 +383,7 @@ curl -s -o /dev/null -w 'HTTP %{http_code}\n' http://127.0.0.1:8081/api/v2.0/pin
 
 ```bash
 cd harbor/docker
-./build.sh               # 拉 v2.15.2 image，並用 prepare 產生 ./data/config/
+./build.sh               # 拉釘選的 dev image，並用 prepare 產生 ./data/config/
 ```
 
 啟動：
@@ -674,8 +675,8 @@ cd harbor
 | --- | --- | --- |
 | GitLab | K8s | `k8s/03-deployment.yaml` 的**兩處** `image`（initContainer 與主容器） |
 | GitLab | Compose | `docker/Dockerfile` 的 `FROM` |
-| Harbor | K8s | `k8s/1*.yaml` 的各 `image`、`k8s/build.sh` 的 `HARBOR_VERSION` |
-| Harbor | Compose | `docker/docker-compose.yaml` 的 8 個 tag 與 `build.sh` |
+| Harbor | K8s | `k8s/1*.yaml` 的 8 個 `image` digest、`k8s/build.sh` 的 `HARBOR_IMAGE_DIGESTS` 與 `PREPARE_IMAGE` |
+| Harbor | Compose | `docker/docker-compose.yaml` 的 8 個 `image` digest、`docker/build.sh` 的 `HARBOR_VERSION`（prepare）、`docker/Dockerfile` 的 `FROM` |
 
 升級流程：K8s 走「改檔 → `./run.sh stop` → `./run.sh`」；Docker Compose 走
 「改檔 → `./docker/build.sh` → `./run.sh docker`」。無論走哪一套，升級前都要把對應的
@@ -725,6 +726,27 @@ v2.11.0 直上 v2.15.2，未逐版停留）。但**跨過的每一版都可能�
   ```
 
   備份對象同樣要看方案：K8s 是 `harbor/k8s/data`，Docker Compose 是 `harbor/docker/data`。
+
+#### 改用 `dev` 標籤（arm64 原生）
+
+Harbor 正式版到 v2.15.3-rc1 為止都只出 amd64，而本機與 Docker Desktop 節點皆為
+arm64，8 個 service 一直靠 Rosetta 模擬執行。arm64 支援已於 2026-05-12 併入 main
+（PR #22311），但還沒進正式版，目前只有 `dev` 標籤（v2.16.0 開發版）帶
+`amd64 + arm64` 的 manifest list，故兩套方案都改用 `dev`。
+
+`dev` 是每日建置的浮動標籤，K8s manifests 又一律 `imagePullPolicy: IfNotPresent`，
+只寫標籤會讓各 service 混到不同天的建置，因此都寫成
+`goharbor/<image>:dev@sha256:<index digest>`，把 8 個 service 加 `prepare` 共 9 個
+映像釘死在同一批建置（目前是 2026-09-16）。
+
+換版時到 Docker Hub 取同一天的 9 個 index digest，上表列的位置一次換齊，再走一般
+升級流程。沿用既有 `data/` 時 `build.sh` 可以直接重跑：`prepare` 偵測到
+`data/secret/` 已有金鑰會原樣保留，只重生 `data/config/`，既有帳號與資料因而跟著
+帶到新版本（前面「兩者不可混用」說的是首次從 Compose 資料改建 K8s 方案的情境）。
+本次換版沒有 PostgreSQL 大版本變動（`dev` 的 harbor-db 仍是 PG 18），不會觸發
+`pg_upgrade`，也不需重建索引。
+
+v2.16.0 正式版發布後（屆時應含 arm64），改回釘正式 tag。
 
 升級期間請用 `./run.sh stop` 停用服務。K8s 方案下這會移除 Deployment，pod 不再被
 controller 重建；Docker Compose 方案下等同 `docker compose down`，容器被移除後不受
