@@ -67,7 +67,7 @@ mkdir -p "${DATA_DIR}/database" "${DATA_DIR}/registry" "${DATA_DIR}/redis" "${DA
 mkdir -p "${DATA_DIR}/ca_download" "${DATA_DIR}/psc" "${DATA_DIR}/secret"
 
 echo "[build.sh] 拉取 Harbor 各 service image（版本見 ../versions.env）..."
-# 逐行讀 versions.env，值本身就是完整的 repo:tag@sha256:… 字串；
+# 逐行讀 versions.env，值本身就是完整的映像字串（repo、tag 與 index digest）；
 # 連 prepare 共 9 個映像一次拉齊。
 while IFS='=' read -r key value; do
   # 只取 KEY=VALUE，跳過空行與 # 註解。

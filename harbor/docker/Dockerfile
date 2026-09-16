@@ -6,7 +6,11 @@
 #
 # 此檔案保留作為符合專案既定 docker/ 結構，以及日後若需客製化單一 service 之
 # 進入點（例如改 harbor-core）。
-FROM goharbor/harbor-core:dev@sha256:fef1f0825017f6fec9c9420dc0766ed3b7a201843f20e1967be28ca99fdb70a3
+#
+# 基底映像版本同樣取自 ../versions.env，不在本檔寫死。真要建置時：
+#   docker build --build-arg HARBOR_IMAGE_CORE="$(. ../versions.env; echo "$HARBOR_IMAGE_CORE")" .
+ARG HARBOR_IMAGE_CORE
+FROM ${HARBOR_IMAGE_CORE}
 
 LABEL maintainer="MacDevelopSyStem"
 LABEL purpose="本機 macOS 開發環境之 Harbor Registry（佔位 Dockerfile，實際以多 service compose 啟動）"
