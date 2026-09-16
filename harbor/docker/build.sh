@@ -17,7 +17,11 @@
 set -euo pipefail
 
 readonly SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-readonly HARBOR_VERSION="v2.15.2"
+# prepare 映像釘選：正式版至 v2.15.3-rc1 仍只提供 amd64，本機為 arm64，故改用
+# 唯一含 arm64 原生映像的 dev 標籤（v2.16.0 開發版），並以 index digest 鎖定
+# 同一批（2026-09-16）建置。其餘 service 的映像由 docker compose pull 依
+# docker-compose.yaml 內的 digest 決定，兩處換版時須一起更新。
+readonly HARBOR_VERSION="dev@sha256:453da3cb34e155d58426f7ce508abd78e5fb574b60885c848a6a403c9bb65e3d"
 # 持久化資料夾，以 bind mount 掛入各 service。
 readonly DATA_DIR="${SCRIPT_DIR}/data"
 
@@ -30,7 +34,7 @@ mkdir -p "${DATA_DIR}/config"
 mkdir -p "${DATA_DIR}/database" "${DATA_DIR}/registry" "${DATA_DIR}/redis" "${DATA_DIR}/job_logs"
 mkdir -p "${DATA_DIR}/ca_download" "${DATA_DIR}/psc" "${DATA_DIR}/secret"
 
-echo "[build.sh] 拉取 Harbor ${HARBOR_VERSION} 各 service image..."
+echo "[build.sh] 拉取 Harbor 各 service image（版本見 docker-compose.yaml）..."
 docker compose pull
 
 echo "[build.sh] 使用 goharbor/prepare:${HARBOR_VERSION} 從 harbor.yml 產生設定..."
