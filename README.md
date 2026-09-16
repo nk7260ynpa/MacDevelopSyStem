@@ -69,7 +69,7 @@ MacDevelopSyStem/
     │   ├── 15-portal.yaml
     │   ├── 16-proxy.yaml        # 對外入口：LoadBalancer + hostPort 8081
     │   ├── apply.sh             # 套用資源 + 將 env 檔轉為 Secret
-    │   ├── build.sh             # 全新建立時以 prepare 產生設定
+    │   ├── build.sh             # 首次建立或升級映像時以 prepare 產生設定
     │   ├── delete.sh            # 移除資源（data 保留）
     │   ├── migrate.sh           # 自 docker/data 遷移既有資料
     │   └── data/                # 持久化資料（僅 .keep 納入版控）
@@ -315,8 +315,10 @@ cd harbor/k8s
 ./build.sh               # 全新建立：拉 image 並用 prepare 產生設定與金鑰
 ```
 
-> 兩者**不可混用**：`build.sh` 會產生全新的加密金鑰，與既有資料庫的內容對不起來。
-> 已經有資料要沿用就只跑 `migrate.sh`。
+> 兩者**不可混用**：`data/secret/` 尚不存在時 `build.sh` 會產生全新的加密金鑰，
+> 與既有資料庫的內容對不起來，已經有 Compose 版資料要沿用就只跑 `migrate.sh`。
+> 同方案內升級映像不在此限——可直接重跑 `build.sh`，既有的 `data/secret/` 會被保留，
+> 詳見「版本升級 › Harbor」的〈改用 `dev` 標籤（arm64 原生）〉。
 
 啟動與其他操作：
 
@@ -676,7 +678,7 @@ cd harbor
 | GitLab | K8s | `k8s/03-deployment.yaml` 的**兩處** `image`（initContainer 與主容器） |
 | GitLab | Compose | `docker/Dockerfile` 的 `FROM` |
 | Harbor | K8s | `k8s/1*.yaml` 的 8 個 `image` digest、`k8s/build.sh` 的 `HARBOR_IMAGE_DIGESTS` 與 `PREPARE_IMAGE` |
-| Harbor | Compose | `docker/docker-compose.yaml` 的 8 個 `image` digest、`docker/build.sh` 的 `HARBOR_VERSION`（prepare）、`docker/Dockerfile` 的 `FROM` |
+| Harbor | Compose | `docker/docker-compose.yaml` 的 8 個 `image` digest、`docker/build.sh` 的 `PREPARE_IMAGE`、`docker/Dockerfile` 的 `FROM` |
 
 升級流程：K8s 走「改檔 → `./run.sh stop` → `./run.sh`」；Docker Compose 走
 「改檔 → `./docker/build.sh` → `./run.sh docker`」。無論走哪一套，升級前都要把對應的

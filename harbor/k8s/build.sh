@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 #
-# 為 K8s 方案產生 Harbor 各 service 的設定（全新建立時使用）。
+# 為 K8s 方案產生 Harbor 各 service 的設定（首次建立或升級映像時使用）。
 #
 # 用法：
 #   ./build.sh

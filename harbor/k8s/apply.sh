@@ -154,7 +154,7 @@ for required in config/core config/nginx config/registry \
   if [[ ! -e "${DATA_DIR}/${required}" ]]; then
     echo "[apply.sh] 偵測不到 data/${required}，設定或金鑰不完整。請先擇一執行：" >&2
     echo "  ./migrate.sh   # 沿用 Docker Compose 版的既有資料" >&2
-    echo "  ./build.sh     # 全新建立（以 harbor.yml 產生設定）" >&2
+    echo "  ./build.sh     # 全新建立或升級映像（既有 secret/ 會保留）" >&2
     exit 1
   fi
 done
